@@ -43,7 +43,13 @@ params = dict()
 # IMPORTANT: Point this to your 'openpose/models' folder
 # This folder should contain subfolders like 'pose/body_25', 'face', etc.
 params["model_folder"] = r"C:\Users\Rottem2\Desktop\Rottem\school\project_a\openpose\models"
-params["net_resolution"] = "-1x160"
+
+params["num_gpu"] = 0       # Force CPU usage
+params["num_gpu_start"] = 0 
+# Now you can use higher resolution because RAM is usually larger than VRAM
+params["net_resolution"] = "-1x256"
+
+#params["net_resolution"] = "-1x224"
 
 # Optional: Enable Hand or Face detection if needed for your project
 # params["face"] = False
@@ -59,22 +65,26 @@ except Exception as e:
     print(f"Error starting OpenPose: {e}")
     sys.exit(-1)
 
-# --- 4. PROCESS AN IMAGE ---
-# Create a dummy image (black screen) if you don't have one ready, 
-# or load a real image using cv2.imread("path/to/image.jpg")
-image_path = r"C:\Users\Rottem2\Desktop\Rottem\school\project_a\20220711_205110.jpg"
-image_to_process = cv2.imread(image_path)
-if image_to_process is None:
-    print(f"Failed to load image at {image_path}. Using a blank image instead.")
+# video setup
+video_path = r"C:\Users\Rottem2\Desktop\Rottem\school\project_a\Cam1(1+2).MP4"
+cap = cv2.VideoCapture(video_path)
 
+if not cap.isOpened():
+    print(f"Error: Could not open video {video_path}")
+    sys.exit(-1)
 
-#image_to_process = np.zeros((720, 1280, 3), dtype=np.uint8) 
+target_frame_number = 3100
+cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame_number)
+
+res, frame = cap.read()
+
+if not res:
+    print(f"Error: Could not read frame {target_frame_number} from video.")
+    sys.exit(-1)
 
 # Create the specific OpenPose data container
 datum = op.Datum()
-datum.cvInputData = image_to_process
-
-# Run the processing
+datum.cvInputData = frame
 opWrapper.emplaceAndPop(op.VectorDatum([datum]))
 
 # --- 5. INSPECT RESULTS ---
@@ -82,20 +92,38 @@ if datum.poseKeypoints is not None:
     print(f"Body Keypoints Shape: {datum.poseKeypoints.shape}")
     print("Coordinates for the first person detected:")
     print(datum.poseKeypoints[0]) 
-    window_name = "OpenPose Result"
-    
-    # 1. Create a window that allows resizing
-    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-    
-    # 2. Force the window to open at a specific size (e.g., 800x600)
-    cv2.resizeWindow(window_name, 300, 400)
-    
-    # 3. Show the image
-    cv2.imshow(window_name, datum.cvOutputData)
-    print("Press 'q' or ESC to exit...")
-    
-    # 4. Wait for key press
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+
 else:
     print("No body detected in the image.")
+
+
+# --- REPLACE FROM HERE DOWN ---
+
+window_name = "Video Frame"
+cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+cv2.resizeWindow(window_name, 800, 600)
+
+# 1. Define a variable to hold the image we want to show
+image_to_show = None
+
+# 2. Try to get the OpenPose output first
+if datum.cvOutputData is not None:
+    # Check if the image actually has valid dimensions (rows > 0, cols > 0)
+    if datum.cvOutputData.shape[0] > 0 and datum.cvOutputData.shape[1] > 0:
+        image_to_show = datum.cvOutputData
+
+# 3. If OpenPose failed, fallback to the original frame
+if image_to_show is None:
+    print("Warning: OpenPose did not return a valid image. Showing original frame.")
+    if frame is not None and frame.shape[0] > 0 and frame.shape[1] > 0:
+        image_to_show = frame
+
+# 4. If BOTH are bad, we cannot show anything
+if image_to_show is not None:
+    cv2.imshow(window_name, image_to_show)
+    print("Displaying image. Press any key to exit.")
+    cv2.waitKey(0)
+else:
+    print("Error: Both OpenPose output and original frame are empty. Cannot display.")
+
+cv2.destroyAllWindows()
