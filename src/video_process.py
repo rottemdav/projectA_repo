@@ -26,7 +26,7 @@ except Exception as e:
     print(f"Error starting OpenPose: {e}")
     sys.exit(1)
 
-video_path = "/home/projects/sipl-prj10496/project_files/data/source_videos/NL124_3-1786/GX010036[1].MP4"
+video_path = "/home/projects/sipl-prj10496/project_files/data/source_videos/NL124/4-3336/GX010030[1].MP4"
 video_filename = os.path.splitext(os.path.basename(video_path))[0]
 cap = cv2.VideoCapture(video_path)
 
@@ -57,7 +57,7 @@ print(f"Starting processing... Video output: {output_video_path}")
 
 # Process video frames
 
-processed_length_dur = 15
+processed_length_dur = 30
 start_frame = 1800
 
 end_frame = start_frame + int(fps * processed_length_dur)
