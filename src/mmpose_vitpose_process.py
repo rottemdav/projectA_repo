@@ -17,8 +17,12 @@ Usage:
 import os
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
 from datetime import datetime
 from typing import Optional, List, Tuple, Union
+from scipy.signal import filtfilt, butter
+
+
 
 # MMPose imports
 from mmpose.apis import inference_topdown, init_model as init_pose_estimator
@@ -26,6 +30,8 @@ from mmpose.evaluation.functional import nms
 from mmpose.registry import VISUALIZERS
 from mmpose.structures import merge_data_samples, split_instances
 from mmpose.utils import adapt_mmdet_pipeline
+from mmengine.structures import InstanceData
+from mmpose.structures import PoseDataSample
 
 # MMDetection imports
 try:
@@ -34,7 +40,6 @@ try:
 except (ImportError, ModuleNotFoundError):
     HAS_MMDET = False
     print("Warning: mmdet not found. Person detection will not be available.")
-
 
 # ==================== Configuration ====================
 class Config:
@@ -87,14 +92,13 @@ class Config:
     DRAW_FACE = False  # Whether to draw face keypoints (set False to skip face)
     
     # Video processing parameters
-    START_FRAME = 2700    # Frame to start processing from (0 = beginning)
+    START_FRAME = 8000    # Frame to start processing from (0 = beginning)
     MAX_FRAMES = None     # Maximum frames to process (None = all frames)
-    END_FRAME = 3900      # Frame to end processing (inclusive, None = till end)
+    END_FRAME = 15200      # Frame to end processing (inclusive, None = till end)
     
     # Input/Output paths
     INPUT_PATH = "/home/projects/sipl-prj10496/project_files/data/source_videos/NL124/4-3336/GX010030[1].MP4"
     OUTPUT_DIR = "/home/projects/sipl-prj10496/project_files/data/mmpose_hrnet_wholebody_output"
-
 
 class WholeBodyPoseProcessor:
     """
@@ -113,8 +117,7 @@ class WholeBodyPoseProcessor:
     - Processing videos frame by frame
     - Visualizing pose estimation results
     - Extracting specific body parts (face, hands, body)
-    """
-    
+    """  
     # Keypoint indices for each body part
     BODY_INDICES = list(range(0, 17))      # 17 body keypoints
     FOOT_INDICES = list(range(17, 23))     # 6 foot keypoints
@@ -131,7 +134,7 @@ class WholeBodyPoseProcessor:
         device: str = Config.DEVICE,
         bbox_thr: float = Config.BBOX_THR,
         nms_thr: float = Config.NMS_THR,
-        kpt_thr: float = Config.KPT_THR,
+        vis_kpt_thr: float = Config.KPT_THR,
     ):
         """
         Initialize WholeBody pose processor.
@@ -149,7 +152,7 @@ class WholeBodyPoseProcessor:
         self.device = device
         self.bbox_thr = bbox_thr
         self.nms_thr = nms_thr
-        self.kpt_thr = kpt_thr
+        self.vis_kpt_thr = vis_kpt_thr
         self.det_cat_id = Config.DET_CAT_ID
         
         # Change to mmpose root directory for config resolution
@@ -280,23 +283,30 @@ class WholeBodyPoseProcessor:
         """
         # Convert BGR to RGB for visualization
         img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        
-        self.visualizer.add_datasample(
-            'result',
-            img_rgb,
-            data_sample=data_samples,
-            draw_gt=False,
-            draw_heatmap=draw_heatmap,
-            draw_bbox=draw_bbox,
-            show_kpt_idx=False,
-            skeleton_style=skeleton_style,
-            show=show,
-            wait_time=0,
-            kpt_thr=self.kpt_thr
-        )
+        try:
+            self.visualizer.add_datasample(
+                'result',
+                img_rgb,
+                data_sample=data_samples,
+                draw_gt=False,
+                draw_heatmap=draw_heatmap,
+                draw_bbox=draw_bbox,
+                show_kpt_idx=False,
+                skeleton_style=skeleton_style,
+                show=show,
+                wait_time=0,
+                kpt_thr=self.vis_kpt_thr
+            )
+        except Exception as e:
+            print(f"[WARNING] Error during visualization: {e}")
+            return image  # Return original image on error
         
         # Get the visualization result
         vis_image = self.visualizer.get_image()
+        
+        if vis_image is None:
+            print("[WARNING] Visualizer returned None, using original image")
+            return image
         
         # Convert back to BGR for OpenCV
         vis_image = cv2.cvtColor(vis_image, cv2.COLOR_RGB2BGR)
@@ -411,6 +421,7 @@ class WholeBodyPoseProcessor:
         face_indices = self.FACE_INDICES if not draw_face else []
         
         all_results = []
+        all_frames = []
         json_results = []
         frame_idx = start_frame
         processed_count = 0
@@ -451,6 +462,12 @@ class WholeBodyPoseProcessor:
                     'frame_index': frame_idx,
                     'persons': []
                 }
+
+                full_frame = {
+                    'frame_index': frame_idx,
+                    'timestamp': frame_idx  / fps,
+                    'persons': []
+                }
                 if pose_results:
                     keypoints_list = self.extract_keypoints(pose_results)
                     for person in keypoints_list:
@@ -461,8 +478,14 @@ class WholeBodyPoseProcessor:
                             'feet': { 'keypoints': person['feet']['keypoints'].tolist(),
                                        'scores': person['feet']['scores'].tolist()
                                     }
+                        })  
+                        full_frame['persons'].append({
+                            'bbox': person['bbox'].tolist() if person['bbox'] is not None else None,
+                            'keypoints': person['keypoints'].tolist(),
+                            'scores': person['scores'].tolist()
                         })
                 json_results.append(frame_json)
+                all_frames.append(full_frame)
 
                 processed_count += 1
 
@@ -487,7 +510,7 @@ class WholeBodyPoseProcessor:
 
         timestamp = datetime.now().strftime('%H:%M:%S')
         print(f"[{timestamp}] Finished processing {processed_count} frames (frames {start_frame} to {eff_end_frame})")
-        return all_results
+        return all_results, all_frames
     
     def extract_keypoints(self, pose_results: list) -> List[dict]:
         """
@@ -525,30 +548,264 @@ class WholeBodyPoseProcessor:
     def get_body_keypoints(self, keypoints_data: dict) -> Tuple[np.ndarray, np.ndarray]:
         """Extract only body keypoints (17 keypoints like standard COCO)."""
         return keypoints_data['body']['keypoints'], keypoints_data['body']['scores']
-    
-    def get_face_keypoints(self, keypoints_data: dict) -> Tuple[np.ndarray, np.ndarray]:
-        """Extract only face keypoints (68 keypoints)."""
-        return keypoints_data['face']['keypoints'], keypoints_data['face']['scores']
-    
-    def get_hand_keypoints(self, keypoints_data: dict, hand: str = 'both') -> dict:
-        """
-        Extract hand keypoints.
         
-        Args:
-            keypoints_data: Keypoints dict from extract_keypoints
-            hand: 'left', 'right', or 'both'
+    def write_and_visualize_filtered_video( self,
+                                            all_frames,
+                                            filtered_keypoints,
+                                            video_path: str,
+                                            output_path: str,
+                                            start_frame: int,
+                                            end_frame: int,
+                                            draw_face: bool = True,
+                                            show: bool = False
+                                            ):
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise ValueError(f"Could not open video: {video_path}")
+
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        video_fps = cap.get(cv2.CAP_PROP_FPS)
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        writer = cv2.VideoWriter(output_path, fourcc, video_fps, (width, height))
+        if not writer.isOpened():
+            raise RuntimeError(f"VideoWriter failed to open: {output_path}")
+
+        # Mapping: frame_index -> filtered keypoints
+        # filtered_keypoints is a numpy array (T, K, 3), all_frames is list of dicts with frame_index
+        frame_to_kp = {}
+        for f, kp in zip(all_frames, filtered_keypoints):
+            frame_to_kp[f['frame_index']] = kp
+
+        face_indices = self.FACE_INDICES if not draw_face else []
+
+        frame_idx = start_frame
+        frames_written = 0
+        frames_visualized = 0
+        print(f"[Visualization] Starting to write filtered video from frame {start_frame} to {end_frame}...")
+        
+        while frame_idx <= end_frame:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            if frame_idx in frame_to_kp:
+                kp_arr = np.asarray(frame_to_kp[frame_idx], dtype=np.float32)
+                # kp_arr shape is (K, 3) for single person
+                if kp_arr.ndim == 2:
+                    kp_arr = kp_arr[None, ...]  # (1, K, 3)
+
+                # If you don't have filtered scores, make dummy scores = 1
+                scores = np.ones((kp_arr.shape[0], kp_arr.shape[1]), dtype=np.float32)
+
+                # Hide face if requested
+                if face_indices:
+                    scores[:, face_indices] = 0.0
+
+                # Build a PoseDataSample with pred_instances
+                sample = PoseDataSample()
+                sample.pred_instances = InstanceData(
+                    keypoints=kp_arr,
+                    keypoint_scores=scores
+                )
+                # attach dataset meta so the visualizer knows skeleton definition etc.
+                sample.set_metainfo(self.pose_estimator.dataset_meta)
+
+                # merge_data_samples expects list of PoseDataSample
+                data_samples = merge_data_samples([sample])
+
+                vis_frame = self.visualize(frame, data_samples, show=show)
+                writer.write(vis_frame)
+                frames_visualized += 1
+            else:
+                # No keypoints for this frame, write original frame
+                writer.write(frame)
+
+            frames_written += 1
+            
+            # Print progress every 50 frames
+            if frames_written % 50 == 0:
+                print(f"  [Progress] Written {frames_written} frames (visualized: {frames_visualized}, frame_idx: {frame_idx})")
+
+            frame_idx += 1
+
+        cap.release()
+        writer.release()
+        print(f"Saved filtered output video to: {output_path}")
+        print(f"  [Summary] Total frames: {frames_written}, Visualized: {frames_visualized}, Original: {frames_written - frames_visualized}")
+
+class KeypointPostProcessor:
+    """Class for post-processing keypoints, e.g., temporal filtering."""
+    
+    def __init__(self, fs, conf_threshold=0.2):
+        self.fs = fs
+        self.conf_threshold = conf_threshold
+
+    def keypoints_to_array(self, all_frames: List[dict]) -> np.ndarray:
+        """Convert list of frames with keypoints to a numpy array."""
+        num_frames = len(all_frames)
+        if num_frames == 0:
+            return np.empty((0, 0, 3), dtype=np.float32)
+
+        first_kp = all_frames[0]['persons'][0]['keypoints']
+        if isinstance(first_kp, list):
+            first_kp = np.array(first_kp, dtype=np.float32)
+        num_keypoints = first_kp.shape[0]
+        keypoints_array = np.zeros((num_frames, num_keypoints, 3), dtype=np.float32)
+
+        for t, frame in enumerate(all_frames):
+            if len(frame['persons']) > 0:
+                kp = frame['persons'][0]['keypoints']
+                sc = frame['persons'][0]['scores']
+                # Convert to numpy arrays if they're lists
+                if isinstance(kp, list):
+                    kp = np.array(kp, dtype=np.float32)
+                if isinstance(sc, list):
+                    sc = np.array(sc, dtype=np.float32)
+                keypoints_array[t, :, :2] = kp
+                keypoints_array[t, :, 2] = sc
+            else:
+                keypoints_array[t, :, :] = 0.0  # No detection
+
+        return keypoints_array
+
+    def fill_missing_keypoints(self, keypoints: np.ndarray) -> np.ndarray:
+        """Fill missing keypoints (with confidence < threshold) using interpolation."""
+        keypoints_filled = keypoints.copy()
+        num_frames, num_keypoints, _ = keypoints.shape
+        
+        for k in range(num_keypoints):
+            # Get confidence scores for this keypoint across all frames
+            conf_series = keypoints[:, k, 2]
+            mask = conf_series < self.conf_threshold  # True where confidence is low
+            
+            if np.sum(~mask) < 2:
+                continue  # Not enough points to interpolate
+            
+            # Interpolate x and y coordinates
+            for d in range(2):  # x and y
+                coord_series = keypoints_filled[:, k, d]
+                coord_series[mask] = np.interp(
+                    np.where(mask)[0],
+                    np.where(~mask)[0],
+                    coord_series[~mask]
+                )
+        
+        return keypoints_filled
+
+    def butterworth_lpf (self, KP_filled, fc, order=4):
+        """Apply Butterworth low-pass filter to keypoint time series."""
+        nyq = 0.5 * self.fs
+        cutoff_freq = fc / nyq
+        b, a = butter(order, cutoff_freq, btype='low')
+        return filtfilt(b, a, KP_filled)
+    
+    def temporal_filter(self, KP_filled, fc, order=4):
+        """Apply temporal Butterworth low-pass filter to keypoints."""
+        KP_filled = KP_filled.astype(np.float64)        
+        T, J, D = KP_filled.shape
+        KP_filtered = np.empty_like(KP_filled)
+        
+        for j in range(J):
+            for d in range(D):
+                KP_filtered[:, j, d] = self.butterworth_lpf(KP_filled[:, j, d], fc, order)
+
+        return KP_filtered.astype(np.float32)
+
+    def calc_fc_residual(self, keypoints_raw, filter_func, fc_grid, score, conf_threshold=0.2, joints=None):
         """
-        if hand == 'left':
-            return keypoints_data['left_hand']
-        elif hand == 'right':
-            return keypoints_data['right_hand']
+        keypoint_raw: (T,J,D)
+        score: (T,J) - confidence scores
+        joints: list of joint indices to consider, if None use all
+
+        return: knee_fcs - cutoff per joint, fcs - cutoff for all joints, rms_curves, recommended_fc 
+        """
+
+        keypoints_raw = np.asarray(keypoints_raw, dtype=float)
+        T,J,D = keypoints_raw.shape
+        fcs = np.array(list(fc_grid), dtype=float)
+        
+        if joints is None:
+            joints = list(range(J))
         else:
-            return {
-                'left': keypoints_data['left_hand'],
-                'right': keypoints_data['right_hand']
-            }
+            joints = np.array(joints, dtype=int)
 
+        rms_curves = np.full((J,D,len(fcs)), np.nan, dtype=float)
+        knee_fcs = np.full((J,D), np.nan, dtype=float)
 
+        if score is not None:
+            score = np.asarray(score, dtype=float)
+            global_valid_mask = (score >= conf_threshold)
+
+        else:
+            global_valid_mask = np.ones((T,J), dtype=bool)
+
+        for j in joints:
+            for d in range(D):
+                keypoint_series = keypoints_raw[:, j, d]
+                valid_mask = global_valid_mask[:, j] & np.isfinite(keypoint_series)
+                
+
+                if valid_mask.sum() < max(10, int(0.2 * T)):
+                    continue  # Not enough valid data
+
+                # Extract valid data points
+                valid_data = keypoint_series[valid_mask]
+                
+                residuals = []
+                for fc in fcs:
+                    filtered_series = filter_func(valid_data, fc)
+                    residual = valid_data - filtered_series
+                    rms = np.sqrt(np.mean(residual**2))
+                    residuals.append(rms)
+
+                residuals = np.array(residuals, dtype=float)
+                rms_curves[j, d, :] = residuals
+
+                # Find knee point in residual curve using maximum curvature
+                # The knee is where the curve changes most dramatically
+                if len(residuals) > 2:
+                    # Calculate second derivative to find maximum curvature
+                    diffs = np.diff(residuals)
+                    second_diffs = np.diff(diffs)
+                    
+                    # The knee is where curvature is maximum (most negative second derivative)
+                    if len(second_diffs) > 0:
+                        knee_idx = np.argmin(second_diffs) + 1  # +1 to align with fcs
+                        knee_fcs[j, d] = fcs[knee_idx]
+                    
+        recommended_fc = np.nanmedian(knee_fcs) if np.any(~np.isnan(knee_fcs)) else None
+        return knee_fcs, fcs, rms_curves, recommended_fc
+    
+    def plot_residual_curves(self, fcs, rms_curves, save_path=None):
+        plt.figure(figsize=(6, 4))
+        rms_curves = np.asarray(rms_curves)
+        
+        # Handle both 1D and 2D arrays
+        if rms_curves.ndim == 1:
+            plt.plot(fcs, rms_curves, color='gray')
+        else:
+            # Plot each curve separately
+            for i in range(rms_curves.shape[0]):
+                plt.plot(fcs, rms_curves[i, :], color='gray', alpha=0.5)
+        
+        plt.xlabel('Cutoff Frequency (Hz)')
+        plt.ylabel('RMS Residual')
+        plt.title('RMS Residual vs Cutoff Frequency')
+        plt.grid(True)
+        
+        if save_path:
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            plt.savefig(save_path, dpi=150, bbox_inches='tight')    
+            plt.close()
+        else:
+            plt.show()
+            
+            
 def main():
     """Main function demonstrating WholeBody pose estimation usage."""
     
@@ -566,37 +823,16 @@ def main():
         det_checkpoint=Config.DET_CHECKPOINT,
         device=Config.DEVICE,
         bbox_thr=Config.BBOX_THR,
-        kpt_thr=Config.KPT_THR,
+        vis_kpt_thr=Config.KPT_THR,
     )
-    
-    # Example: Process a single image
-    # Uncomment and modify paths as needed
-    """
-    image_path = "/path/to/your/image.jpg"
-    output_path = os.path.join(Config.OUTPUT_DIR, "result.jpg")
-    pose_results, vis_image = processor.process_image(
-        image_path, 
-        output_path=output_path,
-        show=False
-    )
-    
-    # Extract keypoints in a clean format
-    keypoints = processor.extract_keypoints(pose_results)
-    for i, kp_data in enumerate(keypoints):
-        print(f"Person {i}: {kp_data['keypoints'].shape[0]} keypoints")
-        # Access specific body parts
-        body_kp, body_scores = processor.get_body_keypoints(kp_data)
-        face_kp, face_scores = processor.get_face_keypoints(kp_data)
-        hands = processor.get_hand_keypoints(kp_data, 'both')
-        print(f"  Body: {body_kp.shape}, Face: {face_kp.shape}")
-        print(f"  Left hand: {hands['left']['keypoints'].shape}")
-        print(f"  Right hand: {hands['right']['keypoints'].shape}")
-    """
+
+    #Initialize post-processor
+    post_processor = KeypointPostProcessor(fs=60, conf_threshold=0.3)
     
     # ============ Process Video ============
     video_path = Config.INPUT_PATH
     video_name = os.path.splitext(os.path.basename(video_path))[0]
-    # Use end_frame in output filename if set, else max_frames, else till end
+    # output file name config: use end_frame in output filename if set, else max_frames, else till end
     if Config.END_FRAME is not None:
         out_range = f"{Config.START_FRAME}_to_{Config.END_FRAME}"
     elif Config.MAX_FRAMES is not None:
@@ -604,9 +840,11 @@ def main():
     else:
         out_range = f"{Config.START_FRAME}_to_end"
     output_path = os.path.join(Config.OUTPUT_DIR, f"{video_name}_wholebody_{out_range}.mp4")
+    filtered_output_path = os.path.join(Config.OUTPUT_DIR, f"{video_name}_wholebody_filtered_{out_range}.mp4")
     json_output_path = os.path.join(Config.OUTPUT_DIR, f"{video_name}_wholebody_{out_range}.json")
 
-    all_results = processor.process_video(
+    #video processing results
+    all_results, all_frames = processor.process_video(
         video_path,
         output_path=output_path,
         start_frame=Config.START_FRAME,  # Start from this frame
@@ -616,7 +854,60 @@ def main():
         show=False,
         json_output_path=json_output_path
     )
+
+    # === DEBUG: check how many frames actually have detections ===
+    num_total = len(all_frames)
+    num_with_person = sum(1 for f in all_frames if len(f["persons"]) > 0)
+
+    print("\n=== Frame sanity check ===")
+    print(f"Total processed frames      : {num_total}")
+    print(f"Frames with detected person : {num_with_person}")
+    print("============================\n")
+
+    #post-processing: temporal filtering
+    print("Applying temporal filtering to keypoints...")
+
+    # Extract keypoints into numpy array for processing   
+    keypoints_array = post_processor.keypoints_to_array(all_frames)
+
+    # Fill missing keypoints
+    keypoints_filled = post_processor.fill_missing_keypoints(keypoints_array)
+
+    # Apply temporal low-pass filter
+    fc = 3.0  # Cutoff frequency in Hz
+    keypoints_filtered = post_processor.temporal_filter(keypoints_filled, fc=fc, order=4)
+
+    #compute residuals and recommended fc
+    fc_grid = np.arange(1.0, 20.5, 0.5)
+    foot_idx = WholeBodyPoseProcessor.FOOT_INDICES
+    body_idx = WholeBodyPoseProcessor.BODY_INDICES
+    main_joints = [ *body_idx, *foot_idx ]
+    knee_fcs, fcs, rms_curves, recommended_fc = post_processor.calc_fc_residual(
+        keypoints_array, filter_func=post_processor.butterworth_lpf,
+        fc_grid=fc_grid, score=keypoints_array[:,:,2], conf_threshold=0.2, joints=main_joints
+        )
     
+    print(f"Recommended cutoff frequency from residual analysis: {recommended_fc:.2f} Hz")
+
+    #plot residual curves for body keypoints
+    post_processor.plot_residual_curves(
+        fcs, 
+        np.nanmean(rms_curves[main_joints,:,:], axis=0).squeeze(), 
+        save_path=os.path.join(Config.OUTPUT_DIR, f"{video_name}_residual_curves_{out_range}.png")
+    )
+        
+        
+    processor.write_and_visualize_filtered_video(
+        all_frames=all_frames,
+        filtered_keypoints=keypoints_filtered,
+        video_path=video_path,
+        output_path=filtered_output_path,
+        start_frame=Config.START_FRAME,
+        end_frame=Config.END_FRAME,
+        draw_face=Config.DRAW_FACE,
+        show=False
+    )
+
     # Extract and print keypoints for the first frame with detections
     if all_results:
         frame_idx, pose_results = all_results[0]
@@ -650,7 +941,6 @@ def main():
     print("  body_kp, scores = processor.get_body_keypoints(keypoints[0])")
     print("  face_kp, scores = processor.get_face_keypoints(keypoints[0])")
     print("  hands = processor.get_hand_keypoints(keypoints[0], 'both')")
-
 
 if __name__ == "__main__":
     main()

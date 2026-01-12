@@ -6,7 +6,7 @@ import numpy as np
 import time
 
 try:
-    sys.path.append('/home/projects/sipl-prj10496/project_files/openpose/build/python/openpose')
+    sys.path.insert(0, '/home/projects/sipl-prj10496/project_files/openpose/build/python/openpose')
     import pyopenpose as op
 except ImportError as e:
     print("Error: Could not find OpenPose library.")
@@ -25,8 +25,9 @@ try:
 except Exception as e:
     print(f"Error starting OpenPose: {e}")
     sys.exit(1)
+    
 
-video_path = "/home/projects/sipl-prj10496/project_files/data/source_videos/NL124/4-3336/GX010030[1].MP4"
+video_path = "/home/projects/sipl-prj10496/project_files/data/source_videos/NL124/4-3336/cam_3.MP4"
 video_filename = os.path.splitext(os.path.basename(video_path))[0]
 cap = cv2.VideoCapture(video_path)
 
@@ -35,7 +36,7 @@ height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 fps = cap.get(cv2.CAP_PROP_FPS)
 
 # Generate unique output paths (avoid overwriting existing files)
-output_base = f"/home/projects/sipl-prj10496/project_files/data/output_videos/{video_filename}"
+output_base = f"/home/projects/sipl-prj10496/project_files/data/output_videos_hip/{video_filename}"
 output_video_path = f"{output_base}.mp4"
 counter = 1
 while os.path.exists(output_video_path):
@@ -70,6 +71,8 @@ start_time = time.time()
 frame_number = start_frame
 frames_processed = 0
 
+HIP_Y_LIMIT = 1100 
+
 while cap.isOpened():
     if frame_number >= end_frame:
         break
@@ -82,7 +85,7 @@ while cap.isOpened():
     datum.cvInputData = frame
     opWrapper.emplaceAndPop(op.VectorDatum([datum]))
 
-    final_image = datum.cvOutputData if datum.cvOutputData is not None else frame
+    final_image = frame.copy()
     
     people_list_for_json = []
 
@@ -94,24 +97,27 @@ while cap.isOpened():
         else:
             all_ids = list(range(len(all_keypoints)))
 
-        for i, (person_id, keypoints) in enumerate(zip(all_ids, all_keypoints)):
-            people_list_for_json.append({
-                "person_id": int(person_id),
-                "pose_keypoints_2d": keypoints
-            })
+        for i, keypoints in enumerate(all_keypoints):
+            mid_hip_y = keypoints[8][1]
+            confidence = keypoints[8][2]
 
-            for point_index, point_data in enumerate(keypoints):
-                x, y, confidence = point_data
-                
-                if confidence > 0.1:
-                    px, py = int(x), int(y)
-                    cv2.putText(final_image, str(point_index), (px, py), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+            if confidence > 0.1 and mid_hip_y < HIP_Y_LIMIT:
+                selected_id = all_ids[i]
 
-            nose_x, nose_y = int(keypoints[0][0]), int(keypoints[0][1])
-            if nose_x > 0:
-                cv2.putText(final_image, f"ID: {person_id}", (nose_x, nose_y - 25),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                people_list_for_json.append({
+                    "person_id": int(selected_id),
+                    "pose_keypoints_2d": keypoints
+                })
+
+                for point_index, point_data in enumerate(keypoints):
+                    x, y, conf = point_data
+                    if conf > 0.1:
+                        cv2.circle(final_image, (int(x), int(y)), 4, (0, 255, 0), -1)
+                        if point_index == 8: 
+                             cv2.putText(final_image, f"ID:{selected_id}", (int(x), int(y)-20), 
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+    cv2.line(final_image, (0, HIP_Y_LIMIT), (final_image.shape[1], HIP_Y_LIMIT), (0, 0, 255), 2)
 
     out_video.write(final_image)
 
