@@ -505,6 +505,8 @@ def main():
     print("\nConverting frames to numpy array...")
     keypoints_array = post_processor.keypoints_to_array(frames_data)
     print(f"  Keypoints shape: {keypoints_array.shape} (frames, keypoints, coordinates)")
+    np.set_printoptions(suppress=True, precision=2)
+    print(f"  Sample frame 0 keypoints:\n{keypoints_array[0]}")
     
     # Fill missing keypoints
     print("\nFilling missing keypoints...")
