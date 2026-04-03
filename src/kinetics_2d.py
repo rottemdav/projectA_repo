@@ -140,10 +140,6 @@ def calculate_angles(model, keypoints):
 
     return angles
 
-
-
-
-
 def calculate_gait_parameters(model, keypoints, time_vector, events, scaling_factor=1.0):
     """
     - LHS - Left Heel Strike
@@ -275,6 +271,10 @@ def calculate_gait_parameters(model, keypoints, time_vector, events, scaling_fac
     return gait_params
 
 def calculate_spatial_parameters(model, keypoints, events, scaling_factor=1.0):
+    """
+    calculates spatial parameters such as step length and gait speed based on 2D keypoint positions and gait events.
+    returns a dictionary with calculated spatial parameters.
+    """
     if model == 'BODY25':
         IDX_R_FOOT = 11  # Right Ankle
         IDX_L_FOOT = 14  # Left Ankle

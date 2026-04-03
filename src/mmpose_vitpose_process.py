@@ -95,10 +95,18 @@ class Config:
     START_FRAME = 8000    # Frame to start processing from (0 = beginning)
     MAX_FRAMES = None     # Maximum frames to process (None = all frames)
     END_FRAME = 15200      # Frame to end processing (inclusive, None = till end)
-    
-    # Input/Output paths
+
+    #MISC
+    DATE = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+    # filename format and directory configuration 
     INPUT_PATH = "/home/projects/sipl-prj10496/project_files/data/source_videos/NL124/4-3336/GX010030[1].MP4"
-    OUTPUT_DIR = "/home/projects/sipl-prj10496/project_files/data/mmpose_hrnet_wholebody_output"
+    OUTPUT_DIR = f"/home/projects/sipl-prj10496/project_files/data/hrnet_wholebody_output/{DATE}"
+
+    JSON_FILENAME_FORMAT = f"{{video_name}}_keypoints_{{DATE}}_{{out_range}}.json"
+    VIDEO_FILENAME_FORMAT = f"{{video_name}}_pose_{{DATE}}_{{out_range}}.mp4"
+    FILTERED_VIDEO_FILENAME_FORMAT = f"{{video_name}}_pose_filtered_{{DATE}}_{{out_range}}.mp4"
+    RESIDUAL_PLOT_FORMAT = f"{{video_name}}_residuals_{{DATE}}_{{out_range}}.png"
 
 class WholeBodyPoseProcessor:
     """
@@ -839,9 +847,14 @@ def main():
         out_range = f"{Config.START_FRAME}_to_{Config.START_FRAME + Config.MAX_FRAMES - 1}"
     else:
         out_range = f"{Config.START_FRAME}_to_end"
-    output_path = os.path.join(Config.OUTPUT_DIR, f"{video_name}_wholebody_{out_range}.mp4")
-    filtered_output_path = os.path.join(Config.OUTPUT_DIR, f"{video_name}_wholebody_filtered_{out_range}.mp4")
-    json_output_path = os.path.join(Config.OUTPUT_DIR, f"{video_name}_wholebody_{out_range}.json")
+    output_path = os.path.join(Config.OUTPUT_DIR,
+                               Config.VIDEO_FILENAME_FORMAT.format(video_name=video_name, out_range=out_range))
+    
+    filtered_output_path = os.path.join(Config.OUTPUT_DIR,
+                                        Config.FILTERED_VIDEO_FILENAME_FORMAT.format(video_name=video_name, out_range=out_range))
+    
+    json_output_path = os.path.join(Config.OUTPUT_DIR,
+                                    Config.JSON_FILENAME_FORMAT.format(video_name=video_name, out_range=out_range))
 
     #video processing results
     all_results, all_frames = processor.process_video(
@@ -893,7 +906,8 @@ def main():
     post_processor.plot_residual_curves(
         fcs, 
         np.nanmean(rms_curves[main_joints,:,:], axis=0).squeeze(), 
-        save_path=os.path.join(Config.OUTPUT_DIR, f"{video_name}_residual_curves_{out_range}.png")
+        save_path=os.path.join(Config.OUTPUT_DIR, 
+                               Config.RESIDUAL_PLOT_FORMAT.format(video_name=video_name, out_range=out_range))
     )
         
         
