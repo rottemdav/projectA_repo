@@ -14,10 +14,17 @@ Usage:
     python mmpose_vitpose_process.py
 """
 import os
+import sys
 import numpy as np
 import cv2
 import argparse
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from libs.hrnet_classes import Config, WholeBodyPoseProcessor, KeypointPostProcessor, HAS_MMDET      
+from src.io.keypoints_io import save_keypoints_dict_to_json
 
 def parse_args():
     parser = argparse.ArgumentParser(description="WholeBody Pose Estimation with MMPose")
@@ -86,6 +93,9 @@ def main():
     
     json_output_path = os.path.join(Config.OUTPUT_DIR,
                                     Config.JSON_FILENAME_FORMAT.format(video_name=video_name, DATE=Config.DATE, out_range=out_range))
+    
+    filtered_json_output_path = os.path.join(Config.OUTPUT_DIR,
+                                            Config.FILTERED_JSON_FILENAME_FORMAT.format(video_name=video_name, DATE=Config.DATE, out_range=out_range))
 
     #video processing results
     all_results, all_frames = processor.process_video(
@@ -154,6 +164,13 @@ def main():
         draw_face=Config.DRAW_FACE,
         show=False
     )
+
+    # save the filtered keypoints to a new json file
+    save_keypoints_dict_to_json({
+        "frame_indices": np.arange(len(all_frames)),
+        "keypoints": keypoints_filtered,
+        "has_person": np.array([len(f["persons"]) > 0 for f in all_frames])
+    }, filtered_json_output_path, model_type="wholebody")
 
     # Extract and print keypoints for the first frame with detections
     if all_results:
