@@ -2,11 +2,11 @@ import cv2
 import json
 import os
 from typing import Dict, Any
-from kinetics_2d import calculate_angles, calculate_gait_parameters, calculate_spatial_parameters
+from project_files.projectA_repo.src.kinetics_2d_lib import calculate_angles, calculate_gait_parameters, calculate_spatial_parameters
 
 import numpy as np
 
-from kinetics_2d import WHOLEBODY_KEYPOINTS
+from project_files.projectA_repo.src.kinetics_2d_lib import WHOLEBODY_KEYPOINTS
 
 
 def load_keypoints_dict_from_json(json_path: str, person_mode: str = "first") -> Dict[str, Any]:
@@ -212,11 +212,11 @@ def overlay_angles_on_video(video_path: str, output_path: str, keypoints: np.nda
 	
 
 if __name__ == "__main__":
-	data = load_keypoints_dict_from_json("data/hrnet_wholebody_output/20260403_172455/NL124_3_1_keypoints_20260403_172455_2700_to_2900.json")
+	data = load_keypoints_dict_from_json("/home/projects/sipl-prj10496/project_files/data/hrnet_wholebody_output/20260403_180607/NL124_3_5_keypoints_20260403_180607_2700_to_3700.json")
 	keypoints = data["keypoints"]  # shape: (N, 23, 3)
 	angles = calculate_angles("COCO-WholeBody", keypoints)
-	input_video = "data/hrnet_wholebody_output/20260403_172455/NL124_3_1_pose_filtered_20260403_172455_2700_to_2900.mp4"
-	output_video = "data/hrnet_wholebody_output/20260403_172455/NL124_3_1_pose_filtered_20260403_172455_2700_to_2900_angles.mp4"
+	input_video = "/home/projects/sipl-prj10496/project_files/data/hrnet_wholebody_output/20260403_180607/NL124_3_5_pose_filtered_20260403_180607_2700_to_3700.mp4"
+	output_video = "/home/projects/sipl-prj10496/project_files/data/hrnet_wholebody_output/20260403_180607/NL124_3_5_pose_filtered_20260403_180607_2700_to_3700_angles.mp4"
 	overlay_angles_on_video(input_video, output_video, keypoints)
 
 	print("Calculated angles keys:", list(angles.keys()))

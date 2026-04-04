@@ -11,6 +11,11 @@ Assumptions:
   geometric projections in 2D.
 - Spatial quatitites may be reported in normalized pixel units.
 
+This library contains:
+- calculate_angles: Computes joint angles (hip, knee, ankle) based on 2D keypoints.
+- calculate_gait_parameters: Computes temporal gait parameters (step time, stance time, swing time, double support time) based on detected gait events.
+- calculate_spatial_parameters: Computes spatial parameters such as step length and gait speed based on 2D keypoint positions and gait events.
+
 Authors: Leeor Gabbay, Rottem David
 """
 
