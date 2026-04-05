@@ -48,7 +48,10 @@ def gait_event_detection(gait_distance_data, frame_indices) -> Dict[str, np.ndar
     - frame_indices: (N,) array of frame indices corresponding to the keypoints.
 
     Returns a dictionary with:
-    - heel_strikes: (M,) array of frame indices where heel strikes are detected.
+    - lhs: (M,) array of frame indices where left heel strikes are detected.
+    - lto: (M,) array of frame indices where left toe offs are detected.
+    - rhs: (M,) array of frame indices where right heel strikes are detected.
+    - rto: (M,) array of frame indices where right toe offs are detected.
     - toe_offs: (M,) array of frame indices where toe offs are detected.
     """
     left_ankle_to_pelvis = gait_distance_data["left_ankle_distance"][:, 0]  # (N,)
@@ -65,8 +68,8 @@ def gait_event_detection(gait_distance_data, frame_indices) -> Dict[str, np.ndar
     rto_idx, _ = find_peaks(-right_ankle_to_pelvis, prominence=right_prominence, height=0.0)
 
     return {
-        "left_heel_strikes": lhs_idx,
-        "left_toe_offs": lto_idx,
-        "right_heel_strikes": rhs_idx,
-        "right_toe_offs": rto_idx,
+        "lhs": lhs_idx,
+        "lto": lto_idx,
+        "rhs": rhs_idx,
+        "rto": rto_idx,
     }

@@ -145,7 +145,7 @@ def calculate_angles(model, keypoints):
 
     return angles
 
-def calculate_gait_parameters(model, keypoints, time_vector, events, scaling_factor=1.0):
+def calculate_gait_parameters(keypoints, time_vector, events, scaling_factor=1.0):
     """
     - LHS - Left Heel Strike
     - RHS - Right Heel Strike
@@ -192,7 +192,6 @@ def calculate_gait_parameters(model, keypoints, time_vector, events, scaling_fac
         'stepLength': {},
         'gaitSpeed': 0
     }
-    
 
     # --- 1. Step Times (Time between opposite heel strikes) ---
     # Right Step: Time from LHS to next RHS
@@ -292,8 +291,8 @@ def calculate_spatial_parameters(model, keypoints, events, scaling_factor=1.0):
     spatial_parameters = {}
 
     scaling_factor =scaling_factor
-    rhs_frames = events['rhs_frames']
-    lhs_frames = events['lhs_frames']
+    rhs_frames = events['rhs']
+    lhs_frames = events['lhs']
 
     if 'stepLength' not in spatial_parameters:
         spatial_parameters['stepLength'] = {}
@@ -305,10 +304,8 @@ def calculate_spatial_parameters(model, keypoints, events, scaling_factor=1.0):
     l_pos_at_lhs = keypoints[lhs_frames, IDX_L_FOOT, IDX_X]
     r_pos_at_lhs = keypoints[lhs_frames, IDX_R_FOOT, IDX_X]
     spatial_parameters['stepLength']['left'] = np.abs(scaling_factor * (l_pos_at_lhs - r_pos_at_lhs))
-    all_step_lengths = np.concatenate([spatial_parameters['stepLength']['left'], spatial_parameters['stepLength']['right']])
-    all_step_times = np.concatenate([spatial_parameters['stepTime']['left'], spatial_parameters['stepTime']['right']])
-
-    spatial_parameters['gaitSpeed'] = np.nanmean(all_step_lengths) / np.mean(all_step_times)
+    
+    return spatial_parameters
 
 
 # ------------------ Temporal Parameters ------------------ #

@@ -1,6 +1,7 @@
 import os
 import sys
 import numpy as np
+import argparse
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
@@ -12,6 +13,7 @@ from datetime import datetime
 from src.io.keypoints_io import load_keypoints_dict_from_json
 from src.domain.gait_events_detection import ankle_to_pelvis_distance, gait_event_detection
 from plotting.plot_gait_events_detection_timeseries import plot_ankle_to_pelvis_distance, save_figure
+from src.kinetics_2d_lib import calculate_gait_parameters, calculate_spatial_parameters
 
 DATE = datetime.now().strftime('%Y%m%d_%H%M%S')
 
@@ -22,6 +24,16 @@ video_name = Path(input_path).stem.split("_keypoints")[0]
 run_hash_id = Path(input_path).parent.name
 output_path = f"/home/projects/sipl-prj10496/project_files/outputs/hrnet_wholebody_output/{run_hash_id}/{video_name}_gait_events_timeseries.png"
 fps = 60.0
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Gait Events Detection from HRNet Keypoints")
+
+    parser.add_argument("--plot_distance",
+                        type=bool,
+                        default=False,
+                        help="Whether to plot the ankle to pelvis distance time series with detected gait events.")
+
+    return parser.parse_args()
 
 
 def align_x_to_motion_axis(distance_data):
@@ -49,16 +61,47 @@ def align_x_to_motion_axis(distance_data):
 
     return distance_data
 
+args = parse_args()
+
 keypoints_dict = load_keypoints_dict_from_json(input_path, model_type="wholebody")
 distance_data = ankle_to_pelvis_distance("wholebody", keypoints_dict)
 distance_data = align_x_to_motion_axis(distance_data)
 gait_events = gait_event_detection(distance_data, frame_indices=keypoints_dict['frame_indices'])
 
-fig = plot_ankle_to_pelvis_distance(
-    distance_data,
-    gait_events,
-    frame_indices=keypoints_dict['frame_indices'],
-    fps=fps,
-)
-save_figure(fig, output_path)
+if args.plot_distance:
+    fig = plot_ankle_to_pelvis_distance(
+        distance_data,
+        gait_events,
+        frame_indices=keypoints_dict['frame_indices'],
+        fps=fps,
+    )
+    save_figure(fig, output_path)
 
+time_vector = np.array(keypoints_dict['frame_indices']) / fps
+
+gait_params = calculate_gait_parameters(keypoints_dict['keypoints'], time_vector, gait_events)
+np.set_printoptions(precision=3, suppress=True)
+
+print("Gait Parameters:")
+for param_name, param_value in gait_params.items():
+    if isinstance(param_value, dict):
+        # This handles stepTime, stanceTime, etc.
+        print(f"{param_name}:")
+        for side, values in param_value.items():
+            print(f"  {side}: {values}")
+        print() # Adds a blank line for readability
+    else:
+        # This handles gaitSpeed (a single float)
+        print(f"{param_name}: {param_value:.3f}\n")
+
+spatial_params = calculate_spatial_parameters("COCO-WholeBody", keypoints_dict['keypoints'], gait_events)
+
+print("Spatial Parameters:")
+for param_name, param_value in spatial_params.items():
+    if isinstance(param_value, dict):
+        print(f"{param_name}:")
+        for side, values in param_value.items():
+            print(f"  {side}: {values}")
+        print() # Adds a blank line for readability
+    else:
+        print(f"{param_name}: {param_value:.3f}\n")

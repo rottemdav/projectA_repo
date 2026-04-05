@@ -30,10 +30,10 @@ def plot_ankle_to_pelvis_distance(
     left_ankle_loc = gait_data["left_ankle"]
     right_ankle_loc = gait_data["right_ankle"]
 
-    left_heel_strikes = _as_index_array(gait_events["left_heel_strikes"])
-    left_toe_offs = _as_index_array(gait_events["left_toe_offs"])
-    right_heel_strikes = _as_index_array(gait_events["right_heel_strikes"])
-    right_toe_offs = _as_index_array(gait_events["right_toe_offs"])
+    left_heel_strikes = _as_index_array(gait_events["lhs"])
+    left_toe_offs = _as_index_array(gait_events["lto"])
+    right_heel_strikes = _as_index_array(gait_events["rhs"])
+    right_toe_offs = _as_index_array(gait_events["rto"])
 
     frame_indices = np.asarray(frame_indices, dtype=np.float64)
     time_seconds = frame_indices / float(fps)
