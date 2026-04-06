@@ -34,7 +34,7 @@ class SpatialGaitParameters:
     swing_time: dict[str, np.ndarray]  # {'left': array, 'right': array}
     stride_time: dict[str, np.ndarray]  # {'left': array, 'right': array}
     step_length: dict[str, np.ndarray]  # {'left': array, 'right': array}
-    stride_length: dict[str, np.ndarray]  # {'left': array, 'right
+    stride_length: dict[str, np.ndarray]  # {'left': array, 'right': array}
     cadence: float
     gait_speed: float
 
