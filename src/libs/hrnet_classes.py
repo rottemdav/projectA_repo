@@ -630,13 +630,6 @@ class WholeBodyPoseProcessor:
         print(f"Saved filtered output video to: {output_path}")
         print(f"  [Summary] Total frames: {frames_written}, Visualized: {frames_visualized}, Original: {frames_written - frames_visualized}")
 
-class KeypointPostProcessor:
-    """Class for post-processing keypoints, e.g., temporal filtering."""
-    
-    def __init__(self, fs, conf_threshold=0.2):
-        self.fs = fs
-        self.conf_threshold = conf_threshold
-
     def keypoints_to_array(self, all_frames: List[dict]) -> np.ndarray:
         """Convert list of frames with keypoints to a numpy array."""
         num_frames = len(all_frames)
@@ -664,7 +657,43 @@ class KeypointPostProcessor:
                 keypoints_array[t, :, :] = 0.0  # No detection
 
         return keypoints_array
+    
+class KeypointPostProcessor:
+    """Class for post-processing keypoints, e.g., temporal filtering."""
+    
+    def __init__(self, fs, conf_threshold=0.2):
+        self.fs = fs
+        self.conf_threshold = conf_threshold
 
+    # fixme 3 start : mismatched function location - need to move it elsewhere and delete from here. 
+    def keypoints_to_array(self, all_frames: List[dict]) -> np.ndarray:
+        """Convert list of frames with keypoints to a numpy array."""
+        num_frames = len(all_frames)
+        if num_frames == 0:
+            return np.empty((0, 0, 3), dtype=np.float32)
+
+        first_kp = all_frames[0]['persons'][0]['keypoints']
+        if isinstance(first_kp, list):
+            first_kp = np.array(first_kp, dtype=np.float32)
+        num_keypoints = first_kp.shape[0]
+        keypoints_array = np.zeros((num_frames, num_keypoints, 3), dtype=np.float32)
+
+        for t, frame in enumerate(all_frames):
+            if len(frame['persons']) > 0:
+                kp = frame['persons'][0]['keypoints']
+                sc = frame['persons'][0]['scores']
+                # Convert to numpy arrays if they're lists
+                if isinstance(kp, list):
+                    kp = np.array(kp, dtype=np.float32)
+                if isinstance(sc, list):
+                    sc = np.array(sc, dtype=np.float32)
+                keypoints_array[t, :, :2] = kp
+                keypoints_array[t, :, 2] = sc
+            else:
+                keypoints_array[t, :, :] = 0.0  # No detection
+
+        return keypoints_array
+    # fixme 3 end
     def fill_missing_keypoints(self, keypoints: np.ndarray) -> np.ndarray:
         """Fill missing keypoints (with confidence < threshold) using interpolation."""
         keypoints_filled = keypoints.copy()
