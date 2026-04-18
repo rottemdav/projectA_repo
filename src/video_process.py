@@ -16,11 +16,29 @@ def get_dist(p1, p2):
         return None
     return math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
 
-def is_skeleton_valid(keypoints, prev_hip_pos=None):
+def is_skeleton_valid(keypoints, prev_hip_pos=None, min_conf=0.3):
     """
     Validates the skeleton based on anatomical proportions and movement.
     Returns True if valid, False if it's a 'merged' or 'broken' skeleton.
     """
+    # Required confidence checks to reject incomplete/broken lower-body skeletons.
+    # OpenPose BODY_25 indices used in this project:
+    # MidHip=8, RHip=9, RKnee=10, RAnkle=11, LHip=12, LKnee=13, LAnkle=14
+    def has_conf(idx):
+        return keypoints[idx][2] >= min_conf
+
+    if not has_conf(8):
+        return False
+
+    required_leg_points = [9, 10, 11, 12, 13, 14]
+    confident_leg_points = sum(1 for idx in required_leg_points if has_conf(idx))
+
+    # Require at least 4/6 lower-limb keypoints, and at least one full leg chain.
+    right_leg_complete = has_conf(9) and has_conf(10) and has_conf(11)
+    left_leg_complete = has_conf(12) and has_conf(13) and has_conf(14)
+    if confident_leg_points < 4 or not (right_leg_complete or left_leg_complete):
+        return False
+
     # Reference Scale: Torso length (Neck=1 to MidHip=8)
     torso_len = get_dist(keypoints[1], keypoints[8])
     
@@ -51,11 +69,12 @@ def is_skeleton_valid(keypoints, prev_hip_pos=None):
             return False
 
     # --- CHECK 4: VELOCITY (IF PREVIOUS POSITION EXISTS) ---
-    # A human cannot jump hundreds of pixels in a single frame
+    # At 60 FPS, a human typically cannot move horizontally more than ~50% of their torso length in 1/60th of a second.
     if prev_hip_pos is not None:
         current_hip_x = keypoints[8][0]
         velocity = abs(current_hip_x - prev_hip_pos)
-        if velocity > 250: # Threshold depends on your video resolution
+        max_allowed_jump = torso_len * 0.5  
+        if velocity > max_allowed_jump:
             return False
 
     return True
@@ -104,7 +123,7 @@ except Exception as e:
     sys.exit(1)
     
 
-video_path = "project_files/data/source_videos/NL129/NL129_3_1.MP4"
+video_path = "project_files/data/source_videos/NL129/NL129_2_1.MP4"
 video_filename = os.path.splitext(os.path.basename(video_path))[0]
 cap = cv2.VideoCapture(video_path)
 
@@ -194,6 +213,11 @@ debug_mode = True
 debug_print_every = 30
 # Keep for future tuning: set True to draw MidHip candidates and print their coordinates.
 draw_hip_debug_overlay = False
+# Set False to disable pre-filter drawing.
+draw_prefilter_people = False
+# Draw selected filtered person on top (green/red), so you can compare before/after.
+draw_postfilter_selected = True
+
 use_camera_position_filter = True
 processed_length_dur = end_time_sec - start_time_sec
 print(f"Processing frames {start_frame} to {end_frame} ({processed_length_dur:.2f} seconds at {fps:.1f} fps)...")
@@ -211,7 +235,6 @@ POSE_PAIRS = [
     [1, 0], [0, 15], [15, 17], [0, 16], [16, 18],
     [14, 19], [19, 20], [14, 21], [11, 22], [22, 23], [11, 24]
 ]
-
 
 last_known_hip_x = None
 # (Ensure start_frame, cap, datum, op, opWrapper, etc. are already initialized)
@@ -232,6 +255,7 @@ while cap.isOpened():
     opWrapper.emplaceAndPop(op.VectorDatum([datum]))
 
     final_image = frame.copy()
+
     people_list_for_json = []
     debug_info = {
         "raw_people": 0,
@@ -280,9 +304,9 @@ while cap.isOpened():
                 debug_info["valid_position_people"] += 1
 
             position_ok = is_valid_position or (not use_camera_position_filter)
-
             if mid_hip_conf > 0.4 and position_ok:
                 debug_info["conf_pass_people"] += 1
+
                 if last_known_hip_x is None:
                     best_person_idx = i
                     break 
@@ -315,21 +339,21 @@ while cap.isOpened():
                     "pose_keypoints_2d": cleaned_keypoints
                 })
 
-                # Draw skeleton lines
-                for pair in POSE_PAIRS:
-                    partA, partB = pair[0], pair[1]
-                    xA, yA, confA = cleaned_keypoints[partA]
-                    xB, yB, confB = cleaned_keypoints[partB]
-                    if confA > 0 and confB > 0:
-                        cv2.line(final_image, (int(xA), int(yA)), (int(xB), int(yB)), (0, 255, 0), 3)
+                if draw_postfilter_selected:
+                    # Draw filtered selected person on top
+                    for pair in POSE_PAIRS:
+                        partA, partB = pair[0], pair[1]
+                        xA, yA, confA = cleaned_keypoints[partA]
+                        xB, yB, confB = cleaned_keypoints[partB]
+                        if confA > 0 and confB > 0:
+                            cv2.line(final_image, (int(xA), int(yA)), (int(xB), int(yB)), (0, 255, 0), 3)
 
-                # Draw joint circles
-                for point_data in cleaned_keypoints:
-                    if point_data[2] > 0:
-                        cv2.circle(final_image, (int(point_data[0]), int(point_data[1])), 4, (0, 0, 255), -1)
-            else:
-                # Distortion detected - reset index so no data is saved for this frame
-                best_person_idx = -1
+                    for point_data in cleaned_keypoints:
+                        if point_data[2] > 0:
+                            cv2.circle(final_image, (int(point_data[0]), int(point_data[1])), 4, (0, 0, 255), -1)
+        else:
+            # Distortion detected - reset index so no data is saved for this frame
+            best_person_idx = -1
 
     # --- FINAL OUTPUT FOR THE FRAME ---
 
@@ -345,6 +369,7 @@ while cap.isOpened():
     # Save frame metadata and keypoints into JSON
     json_data = {
         "frame_id": frame_number,
+        "raw_people_count": debug_info["raw_people"],
         "people_count": len(people_list_for_json),
         "people": people_list_for_json
     }
