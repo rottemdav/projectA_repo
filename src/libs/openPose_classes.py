@@ -7,7 +7,6 @@ import numpy as np
 from typing import Optional, List, Tuple
 from datetime import datetime
 from scipy.signal import filtfilt, butter
-import matplotlib.pyplot as plt
 
 class Config:
     """Configuration for OpenPose estimation and post-processing."""
@@ -507,6 +506,7 @@ class KeypointPostProcessor:
         return knee_fcs, fcs, rms_curves, recommended_fc
     
     def plot_residual_curves(self, fcs, rms_curves, save_path=None):
+        import matplotlib.pyplot as plt
         plt.figure(figsize=(6, 4))
         rms_curves = np.asarray(rms_curves)
         

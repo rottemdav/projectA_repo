@@ -50,7 +50,7 @@ def openpose_pose_estimation(input, start_frame, end_frame):
         start_frame=Config.START_FRAME,  # Start from this frame
         max_frames=Config.MAX_FRAMES,    # None for all frames
         end_frame=Config.END_FRAME,      # None for till end, or set for explicit range
-        draw_face=True,                  # In OpenPose, face keypoints are basic (eyes, nose, ears) so drawing them is fine
+        draw_face=Config.DRAW_FACE,      # Set False to hide face keypoints
         show=False,
         json_output_path=json_output_path
     )

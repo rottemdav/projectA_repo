@@ -155,25 +155,6 @@ def post_process_keypoints(keypoints_array):
     config = PostProcessConfig()
 
 # ===== Post-Process Video =====
-    video_path = Config.INPUT_PATH
-    # FIXME 1 start : move the output file name config to utils or config file
-    video_name = os.path.splitext(os.path.basename(video_path))[0]
-    if Config.END_FRAME is not None:
-        out_range = f"{Config.START_FRAME}_to_{Config.END_FRAME}"
-    elif Config.MAX_FRAMES is not None:
-        out_range = f"{Config.START_FRAME}_to_{Config.START_FRAME + Config.MAX_FRAMES - 1}"
-    else:
-        out_range = f"{Config.START_FRAME}_to_end"
-    
-    
-    filtered_output_path = os.path.join(Config.OUTPUT_DIR,
-                                        Config.FILTERED_VIDEO_FILENAME_FORMAT.format(video_name=video_name, DATE=Config.DATE, out_range=out_range))
-
-    filtered_json_output_path = os.path.join(Config.OUTPUT_DIR,
-                                            Config.FILTERED_JSON_FILENAME_FORMAT.format(video_name=video_name, DATE=Config.DATE, out_range=out_range))
-    
-    # FIXME 1 end
-
     #kp_filled = post_processor.fill_missing_keypoints(keypoints_array)
     kp_filled = fill_missing_keypoints(keypoints_array, config)
 

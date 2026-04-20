@@ -40,7 +40,7 @@ def hrnet_pose_estimation(input, start_frame, end_frame):
 
 # ===== Process Video =====
     video_path = Config.INPUT_PATH
-    # fixme 2 start : move the output file name config to utils or config file
+    # FIXME 2 start : move the output file name config to utils or config file
     video_name = os.path.splitext(os.path.basename(video_path))[0]
     if Config.END_FRAME is not None:
         out_range = f"{Config.START_FRAME}_to_{Config.END_FRAME}"
@@ -56,7 +56,7 @@ def hrnet_pose_estimation(input, start_frame, end_frame):
     json_output_path = os.path.join(Config.OUTPUT_DIR,
                                     Config.JSON_FILENAME_FORMAT.format(video_name=video_name, DATE=Config.DATE, out_range=out_range))
     
-    # fixme 2 end
+    # FIXME 2 end
 
     all_results, all_frames = processor.process_video(
         video_path,

@@ -24,6 +24,7 @@ except (ImportError, ModuleNotFoundError):
     HAS_MMDET = False
     print("Warning: mmdet not found. Person detection will not be available.")
 
+# FIXME: moved the config to global config file, delete later
 # ==================== Configuration ====================
 class Config:
     """Configuration for WholeBody pose estimation."""
@@ -91,6 +92,8 @@ class Config:
     FILTERED_JSON_FILENAME_FORMAT = f"{{video_name}}_keypoints_filtered_{{DATE}}_{{out_range}}.json"
     FILTERED_VIDEO_FILENAME_FORMAT = f"{{video_name}}_pose_filtered_{{DATE}}_{{out_range}}.mp4"
     RESIDUAL_PLOT_FORMAT = f"{{video_name}}_residuals_{{DATE}}_{{out_range}}.png"
+
+# FIXME end
 
 class WholeBodyPoseProcessor:
     """
