@@ -122,8 +122,7 @@ except Exception as e:
     print(f"Error starting OpenPose: {e}")
     sys.exit(1)
     
-
-video_path = "project_files/data/source_videos/NL129/NL129_2_1.MP4"
+video_path = "project_files/data/source_videos/NL100/NL100_1.MP4"
 video_filename = os.path.splitext(os.path.basename(video_path))[0]
 cap = cv2.VideoCapture(video_path)
 
@@ -217,6 +216,7 @@ draw_hip_debug_overlay = False
 draw_prefilter_people = False
 # Draw selected filtered person on top (green/red), so you can compare before/after.
 draw_postfilter_selected = True
+draw_cam2_x_limits, cam2_x_min, cam2_x_max = True, 1860, 2380
 
 use_camera_position_filter = True
 processed_length_dur = end_time_sec - start_time_sec
@@ -237,6 +237,9 @@ POSE_PAIRS = [
 ]
 
 last_known_hip_x = None
+# Reset tracking anchor after consecutive frames with no filtered selection.
+missed_filtered_frames = 0
+reset_last_known_after_misses = 5
 # (Ensure start_frame, cap, datum, op, opWrapper, etc. are already initialized)
 
 while cap.isOpened():
@@ -244,7 +247,7 @@ while cap.isOpened():
     if frame_number >= end_frame:
         break
 
-    # Read the next frame from the video capture
+    # Read the next frame from the video capturel
     ret, frame = cap.read()
     if not ret:
         break
@@ -255,6 +258,13 @@ while cap.isOpened():
     opWrapper.emplaceAndPop(op.VectorDatum([datum]))
 
     final_image = frame.copy()
+
+    if cam_num == 2 and draw_cam2_x_limits:
+        cv2.line(final_image, (cam2_x_min, 0), (cam2_x_min, height - 1), (255, 255, 0), 2)
+        cv2.line(final_image, (cam2_x_max, 0), (cam2_x_max, height - 1), (255, 255, 0), 2)
+        cv2.putText(final_image, f"CAM2 X LIMITS: [{cam2_x_min}, {cam2_x_max}]",
+                    (max(10, cam2_x_min - 220), 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2, cv2.LINE_AA)
 
     people_list_for_json = []
     debug_info = {
@@ -283,7 +293,7 @@ while cap.isOpened():
             is_valid_position = False
             if cam_num == 1 and mid_hip_y < 930:
                 is_valid_position = True
-            elif cam_num == 2 and 1860 <= mid_hip_x <= 3380:
+            elif cam_num == 2 and cam2_x_min <= mid_hip_x <= cam2_x_max:
                 is_valid_position = True
             elif cam_num == 3 and mid_hip_y < 1200:
                 is_valid_position = True
@@ -355,6 +365,14 @@ while cap.isOpened():
             # Distortion detected - reset index so no data is saved for this frame
             best_person_idx = -1
 
+    # Reset/maintain tracking anchor based on whether a filtered person was selected.
+    if debug_info["selected"]:
+        missed_filtered_frames = 0
+    else:
+        missed_filtered_frames += 1
+        if missed_filtered_frames >= reset_last_known_after_misses:
+            last_known_hip_x = None
+
     # --- FINAL OUTPUT FOR THE FRAME ---
 
     if debug_mode and ((frames_processed % debug_print_every == 0) or (frames_processed < 5)):
@@ -369,7 +387,6 @@ while cap.isOpened():
     # Save frame metadata and keypoints into JSON
     json_data = {
         "frame_id": frame_number,
-        "raw_people_count": debug_info["raw_people"],
         "people_count": len(people_list_for_json),
         "people": people_list_for_json
     }
