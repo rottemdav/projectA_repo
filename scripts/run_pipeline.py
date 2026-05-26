@@ -1,29 +1,19 @@
 """
-WholeBody Pose Estimation using MMPose
-
-This script demonstrates how to use WholeBody pose estimation models from MMPose.
-WholeBody models detect 133 keypoints: body (17), feet (6), face (68), and hands (42).
-It supports both image and video inputs and uses MMDetection for person detection.
-
-Requirements:
-    - mmpose (with mmengine, mmcv)
-    - mmdet (for person detection)
-    - torch
-
-Usage:
-    python mmpose_vitpose_process.py
+26/05/26 - first version of the pipeline execution script, which runs the whole pipeline 
+from video processing to gait event detection and parameter calculation. 
+This is the main entry point for executing the entire workflow.
 """
-import os
 import sys
-import numpy as np
-import cv2
+import os
 import argparse
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from libs.hrnet_classes import Config, WholeBodyPoseProcessor, KeypointPostProcessor, HAS_MMDET      
+from src.config import Config  
+from src.models.hrnet_video_process import hrnet_pose_estimation
+from src.libs.hrnet_classes import KeypointPostProcessor, WholeBodyPoseProcessor, HAS_MMDET
 from src.io.keypoints_io import save_keypoints_dict_to_json
 
 def parse_args():
@@ -61,13 +51,13 @@ def main():
     
     # Initialize processor
     processor = WholeBodyPoseProcessor(
-        pose_config=Config.POSE_CONFIG,
-        pose_checkpoint=Config.POSE_CHECKPOINT,
-        det_config=Config.DET_CONFIG,
-        det_checkpoint=Config.DET_CHECKPOINT,
+        pose_config=Config.hrnet.POSE_CONFIG,
+        pose_checkpoint=Config.hrnet.POSE_CHECKPOINT,
+        det_config=Config.hrnet.DET_CONFIG,
+        det_checkpoint=Config.hrnet.DET_CHECKPOINT,
         device=Config.DEVICE,
-        bbox_thr=Config.BBOX_THR,
-        vis_kpt_thr=Config.KPT_THR,
+        bbox_thr=Config.hrnet.BBOX_THR,
+        vis_kpt_thr=Config.hrnet.KPT_THR,
     )
 
     #Initialize post-processor
@@ -84,18 +74,18 @@ def main():
     else:
         out_range = f"{Config.START_FRAME}_to_end"
     output_path = os.path.join(Config.OUTPUT_DIR,
-                               Config.VIDEO_FILENAME_FORMAT.format(video_name=video_name,
+                               Config.hrnet.VIDEO_FILENAME_FORMAT.format(video_name=video_name,
                                                                    DATE=Config.DATE,
                                                                     out_range=out_range))
     
     filtered_output_path = os.path.join(Config.OUTPUT_DIR,
-                                        Config.FILTERED_VIDEO_FILENAME_FORMAT.format(video_name=video_name, DATE=Config.DATE, out_range=out_range))
+                                        Config.hrnet.FILTERED_VIDEO_FILENAME_FORMAT.format(video_name=video_name, DATE=Config.DATE, out_range=out_range))
     
     json_output_path = os.path.join(Config.OUTPUT_DIR,
-                                    Config.JSON_FILENAME_FORMAT.format(video_name=video_name, DATE=Config.DATE, out_range=out_range))
+                                    Config.hrnet.JSON_FILENAME_FORMAT.format(video_name=video_name, DATE=Config.DATE, out_range=out_range))
     
     filtered_json_output_path = os.path.join(Config.OUTPUT_DIR,
-                                            Config.FILTERED_JSON_FILENAME_FORMAT.format(video_name=video_name, DATE=Config.DATE, out_range=out_range))
+                                            Config.hrnet.FILTERED_JSON_FILENAME_FORMAT.format(video_name=video_name, DATE=Config.DATE, out_range=out_range))
 
     #video processing results
     all_results, all_frames = processor.process_video(
@@ -104,7 +94,7 @@ def main():
         start_frame=Config.START_FRAME,  # Start from this frame
         max_frames=Config.MAX_FRAMES,    # None for all frames
         end_frame=Config.END_FRAME,      # None for till end, or set for explicit range
-        draw_face=Config.DRAW_FACE,      # Set False to hide face keypoints
+        draw_face=Config.hrnet.DRAW_FACE,      # Set False to hide face keypoints
         show=False,
         json_output_path=json_output_path
     )
@@ -160,7 +150,7 @@ def main():
         output_path=filtered_output_path,
         start_frame=Config.START_FRAME,
         end_frame=Config.END_FRAME,
-        draw_face=Config.DRAW_FACE,
+        draw_face=Config.hrnet.DRAW_FACE,
         show=False
     )
 

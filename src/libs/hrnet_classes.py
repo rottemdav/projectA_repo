@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 from typing import Optional, List, Tuple, Union
 from scipy.signal import filtfilt, butter
+from tqdm import tqdm
+from src.config import Config
 
 # MMPose imports
 from mmpose.apis import inference_topdown, init_model as init_pose_estimator
@@ -23,77 +25,6 @@ try:
 except (ImportError, ModuleNotFoundError):
     HAS_MMDET = False
     print("Warning: mmdet not found. Person detection will not be available.")
-
-# FIXME: moved the config to global config file, delete later
-# ==================== Configuration ====================
-class Config:
-    """Configuration for WholeBody pose estimation."""
-    
-    # Paths - Update these to match your setup
-    MMPOSE_ROOT = "/home/projects/sipl-prj10496/project_files/mmpose"
-    
-    # ============ WholeBody Model Options ============
-    # Option 1: HRNet-W48 WholeBody (Best accuracy, 133 keypoints)
-    POSE_CONFIG = os.path.join(
-        MMPOSE_ROOT, 
-        "configs/wholebody_2d_keypoint/topdown_heatmap/coco-wholebody/td-hm_hrnet-w48_8xb32-210e_coco-wholebody-384x288.py"
-    )
-    POSE_CHECKPOINT = "https://download.openmmlab.com/mmpose/top_down/hrnet/hrnet_w48_coco_wholebody_384x288-6e061c6a_20200922.pth"
-    
-    # Option 2: HRNet-W32 WholeBody (Faster, still good accuracy)
-    # POSE_CONFIG = os.path.join(
-    #     MMPOSE_ROOT, 
-    #     "configs/wholebody_2d_keypoint/topdown_heatmap/coco-wholebody/td-hm_hrnet-w32_8xb64-210e_coco-wholebody-256x192.py"
-    # )
-    # POSE_CHECKPOINT = "https://download.openmmlab.com/mmpose/top_down/hrnet/hrnet_w32_coco_wholebody_256x192-853765cd_20200918.pth"
-    
-    # Option 3: RTMPose-L WholeBody (Fast and accurate, good for real-time)
-    # POSE_CONFIG = os.path.join(
-    #     MMPOSE_ROOT, 
-    #     "projects/rtmpose/rtmpose/wholebody_2d_keypoint/rtmpose-l_8xb64-270e_coco-wholebody-256x192.py"
-    # )
-    # POSE_CHECKPOINT = "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/rtmpose-l_simcc-coco-wholebody_pt-aic-coco_270e-256x192-6f206314_20230124.pth"
-    
-    # Detection model config and checkpoint (RTMDet recommended)
-    DET_CONFIG = os.path.join(
-        MMPOSE_ROOT, 
-        "demo/mmdetection_cfg/rtmdet_m_640-8xb32_coco-person.py"
-    )
-    DET_CHECKPOINT = "https://download.openmmlab.com/mmpose/v1/projects/rtmpose/rtmdet_m_8xb32-100e_coco-obj365-person-235e8209.pth"
-    
-    # Device
-    DEVICE = "cuda:0"  # Use "cpu" if no GPU available
-    
-    # Detection parameters
-    DET_CAT_ID = 0  # Category ID for person in COCO
-    BBOX_THR = 0.3  # Bounding box score threshold
-    NMS_THR = 0.3   # IoU threshold for NMS
-    
-    # Visualization parameters
-    KPT_THR = 0.3   # Keypoint confidence threshold for visualization
-    RADIUS = 8      # Keypoint radius (increased for better visibility)
-    THICKNESS = 4   # Skeleton line thickness (increased for better visibility)
-    DRAW_FACE = False  # Whether to draw face keypoints (set False to skip face)
-    
-    # Video processing parameters
-    START_FRAME = None    # Frame to start processing from (0 = beginning)
-    MAX_FRAMES = None     # Maximum frames to process (None = all frames)
-    END_FRAME = None      # Frame to end processing (inclusive, None = till end)
-    
-    #MISC
-    DATE = datetime.now().strftime('%Y%m%d_%H%M%S')
-
-    # filename format and directory configuration 
-    INPUT_PATH = None
-    OUTPUT_DIR = f"/home/projects/sipl-prj10496/project_files/data/hrnet_wholebody_output/{DATE}"
-
-    JSON_FILENAME_FORMAT = f"{{video_name}}_keypoints_{{DATE}}_{{out_range}}.json"
-    VIDEO_FILENAME_FORMAT = f"{{video_name}}_pose_{{DATE}}_{{out_range}}.mp4"
-    FILTERED_JSON_FILENAME_FORMAT = f"{{video_name}}_keypoints_filtered_{{DATE}}_{{out_range}}.json"
-    FILTERED_VIDEO_FILENAME_FORMAT = f"{{video_name}}_pose_filtered_{{DATE}}_{{out_range}}.mp4"
-    RESIDUAL_PLOT_FORMAT = f"{{video_name}}_residuals_{{DATE}}_{{out_range}}.png"
-
-# FIXME end
 
 class WholeBodyPoseProcessor:
     """
@@ -122,14 +53,14 @@ class WholeBodyPoseProcessor:
     
     def __init__(
         self, 
-        pose_config: str = Config.POSE_CONFIG,
-        pose_checkpoint: str = Config.POSE_CHECKPOINT,
-        det_config: str = Config.DET_CONFIG,
-        det_checkpoint: str = Config.DET_CHECKPOINT,
+        pose_config: str = Config.hrnet.POSE_CONFIG,
+        pose_checkpoint: str = Config.hrnet.POSE_CHECKPOINT,
+        det_config: str = Config.hrnet.DET_CONFIG,
+        det_checkpoint: str = Config.hrnet.DET_CHECKPOINT,
         device: str = Config.DEVICE,
-        bbox_thr: float = Config.BBOX_THR,
-        nms_thr: float = Config.NMS_THR,
-        vis_kpt_thr: float = Config.KPT_THR,
+        bbox_thr: float = Config.hrnet.BBOX_THR,
+        nms_thr: float = Config.hrnet.NMS_THR,
+        vis_kpt_thr: float = Config.hrnet.KPT_THR,
     ):
         """
         Initialize WholeBody pose processor.
@@ -148,11 +79,11 @@ class WholeBodyPoseProcessor:
         self.bbox_thr = bbox_thr
         self.nms_thr = nms_thr
         self.vis_kpt_thr = vis_kpt_thr
-        self.det_cat_id = Config.DET_CAT_ID
+        self.det_cat_id = Config.hrnet.DET_CAT_ID
         
         # Change to mmpose root directory for config resolution
         original_dir = os.getcwd()
-        os.chdir(Config.MMPOSE_ROOT)
+        os.chdir(Config.hrnet.MMPOSE_ROOT)
         
         try:
             # Initialize pose model first
@@ -165,8 +96,8 @@ class WholeBodyPoseProcessor:
             
             # Initialize visualizer BEFORE loading mmdet to avoid registry conflicts
             visualizer_cfg = self.pose_estimator.cfg.visualizer.copy()
-            visualizer_cfg['radius'] = Config.RADIUS
-            visualizer_cfg['line_width'] = Config.THICKNESS
+            visualizer_cfg['radius'] = Config.hrnet.RADIUS
+            visualizer_cfg['line_width'] = Config.hrnet.THICKNESS
             self.visualizer = VISUALIZERS.build(visualizer_cfg)
             self.visualizer.set_dataset_meta(
                 self.pose_estimator.dataset_meta
@@ -418,10 +349,10 @@ class WholeBodyPoseProcessor:
         all_results = []
         all_frames = []
         json_results = []
-        frame_idx = start_frame
+#        frame_idx = start_frame
         processed_count = 0
         
-        while frame_idx <= eff_end_frame:
+        for frame_idx in tqdm(range(start_frame, eff_end_frame + 1), total=eff_end_frame - start_frame + 1):
             ret, frame = cap.read()
             if not ret:
                 break
@@ -484,11 +415,11 @@ class WholeBodyPoseProcessor:
 
                 processed_count += 1
 
-                if processed_count % 10 == 0:
-                    timestamp = datetime.now().strftime('%H:%M:%S')
-                    print(f"[{timestamp}] Processed frame {frame_idx} ({processed_count} processed, start={start_frame})/{total_frames}")
+#                if processed_count % 100 == 0:
+#                timestamp = datetime.now().strftime('%H:%M:%S')
+#                    print(f"[{timestamp}] Processed frame {frame_idx} ({processed_count} processed, start={start_frame})/{total_frames}")
 
-            frame_idx += 1
+#           frame_idx += 1
         
         cap.release()
         if writer:
@@ -583,7 +514,7 @@ class WholeBodyPoseProcessor:
         frames_visualized = 0
         print(f"[Visualization] Starting to write filtered video from frame {start_frame} to {end_frame}...")
         
-        while frame_idx <= end_frame:
+        for frame_idx in tqdm(range(start_frame, end_frame + 1), total=end_frame - start_frame + 1):
             ret, frame = cap.read()
             if not ret:
                 break
@@ -623,10 +554,10 @@ class WholeBodyPoseProcessor:
             frames_written += 1
             
             # Print progress every 50 frames
-            if frames_written % 50 == 0:
-                print(f"  [Progress] Written {frames_written} frames (visualized: {frames_visualized}, frame_idx: {frame_idx})")
+#            if frames_written % 50 == 0:
+#                print(f"  [Progress] Written {frames_written} frames (visualized: {frames_visualized}, frame_idx: {frame_idx})")
 
-            frame_idx += 1
+#            frame_idx += 1
 
         cap.release()
         writer.release()

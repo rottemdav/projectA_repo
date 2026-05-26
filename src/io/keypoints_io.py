@@ -3,7 +3,7 @@ import numpy as np
 import math
 
 from typing import Any, Dict, List, Tuple
-from src.models.keypoints_mapping import WHOLEBODY_KEYPOINTS
+from src.models.joint_model_mapping import WHOLEBODY_KEYPOINTS
 
 
 def _extract_kpt_block(person: Dict[str, Any], keys: List[str], expected_n: int) -> np.ndarray:

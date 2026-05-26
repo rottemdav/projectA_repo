@@ -13,7 +13,7 @@ from datetime import datetime
 from src.io.keypoints_io import load_keypoints_dict_from_json
 from src.domain.gait_events_detection import ankle_to_pelvis_distance, gait_event_detection
 from plotting.plot_gait_events_detection_timeseries import plot_ankle_to_pelvis_distance, save_figure
-from src.kinetics_2d_lib import calculate_gait_parameters, calculate_spatial_parameters
+from project_files.projectA_repo.archive.kinetics_2d_lib import calculate_gait_parameters, calculate_spatial_parameters
 
 DATE = datetime.now().strftime('%Y%m%d_%H%M%S')
 
