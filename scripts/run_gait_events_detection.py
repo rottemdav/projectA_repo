@@ -1,7 +1,10 @@
 import os
 import sys
+import pandas as pd
 import numpy as np
 import argparse
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
@@ -15,6 +18,7 @@ from src.domain.gait_events_detection import ankle_to_pelvis_distance, gait_even
 from src.domain.gait_feature_extraction import calculate_gait_parameters, calculate_spatial_parameters
 from plotting.plot_gait_events_detection_timeseries import plot_ankle_to_pelvis_distance, save_figure
 from src.models.joint_model_mapping import BODY25_GAIT_KEYPOINTS, WHOLEBODY_GAIT_KEYPOINTS
+from src.io.features_io import STEP_EVENTS_SCHEMA, VIDEO_SUMMARY_SCHEMA, build_steps_rows
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Gait Events Detection from HRNet Keypoints")
@@ -112,3 +116,72 @@ for param_name, param_value in spatial_params.items():
         print() # Adds a blank line for readability
     else:
         print(f"{param_name}: {param_value:.3f}\n")
+
+## build rows for steps, double support, and video summary tables
+
+# Map event indices -> frame numbers
+frame_indices = np.array(keypoints_dict["frame_indices"])
+lhs_frames = frame_indices[gait_events["lhs"]]
+lto_frames = frame_indices[gait_events["lto"]]
+rhs_frames = frame_indices[gait_events["rhs"]]
+rto_frames = frame_indices[gait_events["rto"]]
+
+step_rows = []
+
+step_rows += build_steps_rows(
+    video_name,
+    run_hash_id,
+    "left",
+    lhs_frames,
+    lto_frames,
+    gait_params["stepTime"]["left"],
+    gait_params["stanceTime"]["left"],
+    gait_params["swingTime"]["left"],
+    spatial_params["stepLength"]["left"],
+)
+
+step_rows += build_steps_rows(
+    video_name,
+    run_hash_id,
+    "right",
+    rhs_frames,
+    rto_frames,
+    gait_params["stepTime"]["right"],
+    gait_params["stanceTime"]["right"],
+    gait_params["swingTime"]["right"],
+    spatial_params["stepLength"]["right"],
+)
+
+steps_df = pd.DataFrame(step_rows)
+
+steps_table = pa.Table.from_pandas(steps_df, schema=STEP_EVENTS_SCHEMA, preserve_index=False)
+
+features_dir = f"/home/projects/sipl-prj10496/project_files/outputs/hrnet_wholebody_output/{run_hash_id}"
+steps_path = f"{features_dir}/{video_name}_steps.parquet"
+pq.write_table(steps_table, steps_path)
+
+summary_df = pd.DataFrame([{
+    "video_id": video_name,
+    "run_hash_id": run_hash_id,
+    "num_frames": int(len(frame_indices)),
+    "fps": float(fps),
+    "num_steps_left": int(len(gait_params["stepTime"]["left"])),
+    "num_steps_right": int(len(gait_params["stepTime"]["right"])),
+    "cadence_spm": float(spatial_params.get("cadence", np.nan)),
+    "gait_speed_px_per_s": float(gait_params.get("gaitSpeed", np.nan)),
+    "mean_step_time_right_s": float(np.nanmean(gait_params["stepTime"]["right"])),
+    "mean_step_time_left_s": float(np.nanmean(gait_params["stepTime"]["left"])),
+    "mean_step_length_right_px": float(np.nanmean(spatial_params["stepLength"]["right"])),
+    "mean_step_length_left_px": float(np.nanmean(spatial_params["stepLength"]["left"])),
+    "std_step_time_right_s": float(np.nanstd(gait_params["stepTime"]["right"])),
+    "std_step_time_left_s": float(np.nanstd(gait_params["stepTime"]["left"])),
+    "std_step_length_right_px": float(np.nanstd(spatial_params["stepLength"]["right"])),
+    "std_step_length_left_px": float(np.nanstd(spatial_params["stepLength"]["left"])),
+    "schema_version": "v1",
+}])
+
+summary_table = pa.Table.from_pandas(summary_df, schema=VIDEO_SUMMARY_SCHEMA, preserve_index=False)
+summary_path = f"{features_dir}/{video_name}_summary.parquet"
+pq.write_table(summary_table, summary_path)
+print(f"Saved step events to {steps_path}")
+print(f"Saved video summary to {summary_path}")
