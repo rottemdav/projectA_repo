@@ -12,18 +12,9 @@ from datetime import datetime
 
 from src.io.keypoints_io import load_keypoints_dict_from_json
 from src.domain.gait_events_detection import ankle_to_pelvis_distance, gait_event_detection
+from src.domain.gait_feature_extraction import calculate_gait_parameters, calculate_spatial_parameters
 from plotting.plot_gait_events_detection_timeseries import plot_ankle_to_pelvis_distance, save_figure
-from project_files.projectA_repo.archive.kinetics_2d_lib import calculate_gait_parameters, calculate_spatial_parameters
-
-DATE = datetime.now().strftime('%Y%m%d_%H%M%S')
-
-input_path = "/home/projects/sipl-prj10496/project_files/data/hrnet_wholebody_output/20260404_174122/HC65_3_keypoints_filtered_20260404_174122_3000_to_5000.json"
-# extract the last part of the filename without extension for output naming
-video_name = Path(input_path).stem.split("_keypoints")[0]
-# extract the running hash id from the parent folder (e.g. 20260404_152056)
-run_hash_id = Path(input_path).parent.name
-output_path = f"/home/projects/sipl-prj10496/project_files/outputs/hrnet_wholebody_output/{run_hash_id}/{video_name}_gait_events_timeseries.png"
-fps = 60.0
+from src.models.joint_model_mapping import BODY25_GAIT_KEYPOINTS, WHOLEBODY_GAIT_KEYPOINTS
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Gait Events Detection from HRNet Keypoints")
@@ -32,6 +23,11 @@ def parse_args():
                         type=bool,
                         default=False,
                         help="Whether to plot the ankle to pelvis distance time series with detected gait events.")
+    
+    parser.add_argument("--input_path",
+                        type=str,
+                        default=None,
+                        help="Path to the input JSON file containing keypoints data.")
 
     return parser.parse_args()
 
@@ -61,7 +57,18 @@ def align_x_to_motion_axis(distance_data):
 
     return distance_data
 
+DATE = datetime.now().strftime('%Y%m%d_%H%M%S')
+
 args = parse_args()
+
+input_path = args.input_path if args.input_path else "/home/projects/sipl-prj10496/project_files/data/hrnet_wholebody_output/20260404_174122/HC65_3_keypoints_filtered_20260404_174122_3000_to_5000.json"
+# extract the last part of the filename without extension for output naming
+video_name = Path(input_path).stem.split("_keypoints")[0]
+# extract the running hash id from the parent folder (e.g. 20260404_152056)
+run_hash_id = Path(input_path).parent.name
+output_path = f"/home/projects/sipl-prj10496/project_files/outputs/hrnet_wholebody_output/{run_hash_id}/{video_name}_gait_events_timeseries.png"
+fps = 60.0
+
 
 keypoints_dict = load_keypoints_dict_from_json(input_path, model_type="wholebody")
 distance_data = ankle_to_pelvis_distance("wholebody", keypoints_dict)

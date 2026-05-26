@@ -3,9 +3,11 @@
 from video processing to gait event detection and parameter calculation. 
 This is the main entry point for executing the entire workflow.
 """
+import json
 import sys
 import os
 import argparse
+import numpy as np
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
@@ -14,7 +16,7 @@ if PROJECT_ROOT not in sys.path:
 from src.config import Config  
 from src.models.hrnet_video_process import hrnet_pose_estimation
 from src.libs.hrnet_classes import KeypointPostProcessor, WholeBodyPoseProcessor, HAS_MMDET
-from src.io.keypoints_io import save_keypoints_dict_to_json
+from src.io.keypoints_io import load_keypoints_dict_from_json, save_keypoints_dict_to_json
 
 def parse_args():
     parser = argparse.ArgumentParser(description="WholeBody Pose Estimation with MMPose")
@@ -33,6 +35,13 @@ def parse_args():
                         type=int,
                         default=None,
                         help="Frame number to end processing (inclusive, default: None for till end)")
+    parser.add_argument("--skip_processing", 
+                        action="store_true",
+                        help="If set, skip the video processing step and directly run post-processing and gait event detection on existing keypoints json output. This is useful for iterating on post-processing and gait event detection without re-running the whole video processing step.")
+    parser.add_argument("--existing_json",
+                        type=str,
+                        default=None,
+                        help="Path to existing keypoints json output to use when --skip_processing is set. If not provided, will look for json output in the default location based on input video name and frame range.")
     return parser.parse_args()
 
 def main():
@@ -88,31 +97,50 @@ def main():
                                             Config.hrnet.FILTERED_JSON_FILENAME_FORMAT.format(video_name=video_name, DATE=Config.DATE, out_range=out_range))
 
     #video processing results
-    all_results, all_frames = processor.process_video(
-        video_path,
-        output_path=output_path,
-        start_frame=Config.START_FRAME,  # Start from this frame
-        max_frames=Config.MAX_FRAMES,    # None for all frames
-        end_frame=Config.END_FRAME,      # None for till end, or set for explicit range
-        draw_face=Config.hrnet.DRAW_FACE,      # Set False to hide face keypoints
-        show=False,
-        json_output_path=json_output_path
-    )
+    if not args.skip_processing:
+        all_results, all_frames = processor.process_video(
+            video_path,
+            output_path=output_path,
+            start_frame=Config.START_FRAME,  # Start from this frame
+            max_frames=Config.MAX_FRAMES,    # None for all frames
+            end_frame=Config.END_FRAME,      # None for till end, or set for explicit range
+            draw_face=Config.hrnet.DRAW_FACE,      # Set False to hide face keypoints
+            show=False,
+            json_output_path=json_output_path
+        )
 
-    # === DEBUG: check how many frames actually have detections ===
-    num_total = len(all_frames)
-    num_with_person = sum(1 for f in all_frames if len(f["persons"]) > 0)
+        # === DEBUG: check how many frames actually have detections ===
+        num_total = len(all_frames)
+        num_with_person = sum(1 for f in all_frames if len(f["persons"]) > 0)
 
-    print("\n=== Frame sanity check ===")
-    print(f"Total processed frames      : {num_total}")
-    print(f"Frames with detected person : {num_with_person}")
-    print("============================\n")
+        print("\n=== Frame sanity check ===")
+        print(f"Total processed frames      : {num_total}")
+        print(f"Frames with detected person : {num_with_person}")
+        print("============================\n")
+
+    if args.skip_processing:
+        print("Skipping video processing step. Loading keypoints from existing json output...")
+        # Load keypoints from existing json output
+        if args.existing_json:
+            json_path = args.existing_json
+        else:
+            # quit the program if no existing json path is provided
+            print("Error: --existing_json must be provided when --skip_processing is set.")
+            return
+
+        loaded = load_keypoints_dict_from_json(json_path, model_type="wholebody")
+        keypoints_arr = loaded["keypoints"]  # shape (N, 133, 3)
+        frame_indices = loaded["frame_indices"]
+        has_person = loaded["has_person"]
 
     #post-processing: temporal filtering
     print("Applying temporal filtering to keypoints...")
 
     # Extract keypoints into numpy array for processing   
-    keypoints_array = post_processor.keypoints_to_array(all_frames)
+    if args.skip_processing:
+        keypoints_array = keypoints_arr
+    else:
+        keypoints_array = post_processor.keypoints_to_array(all_frames)
 
     # Fill missing keypoints
     keypoints_filled = post_processor.fill_missing_keypoints(keypoints_array)
@@ -138,36 +166,42 @@ def main():
         fcs, 
         np.nanmean(rms_curves[main_joints,:,:], axis=0).squeeze(), 
         save_path=os.path.join(Config.OUTPUT_DIR, 
-                               Config.RESIDUAL_PLOT_FORMAT.format(video_name=video_name,
+                               Config.hrnet.RESIDUAL_PLOT_FORMAT.format(video_name=video_name,
                                                                   DATE=Config.DATE,
                                                                   out_range=out_range))
     )
-        
-    processor.write_and_visualize_filtered_video(
-        all_frames=all_frames,
-        filtered_keypoints=keypoints_filtered,
-        video_path=video_path,
-        output_path=filtered_output_path,
-        start_frame=Config.START_FRAME,
-        end_frame=Config.END_FRAME,
-        draw_face=Config.hrnet.DRAW_FACE,
-        show=False
-    )
+    
+    if not args.skip_processing:
+        processor.write_and_visualize_filtered_video(
+            all_frames=all_frames,
+            filtered_keypoints=keypoints_filtered,
+            video_path=video_path,
+            output_path=filtered_output_path,
+            start_frame=Config.START_FRAME,
+            end_frame=Config.END_FRAME,
+            draw_face=Config.hrnet.DRAW_FACE,
+            show=False
+        )
 
+
+        # Extract and print keypoints for the first frame with detections
+        if all_results:
+            frame_idx, pose_results = all_results[0]
+            keypoints = processor.extract_keypoints(pose_results)
+            print(f"\nFrame {frame_idx}: Detected {len(keypoints)} person(s)")
+            for i, kp_data in enumerate(keypoints):
+                print(f"  Person {i}: {kp_data['keypoints'].shape[0]} keypoints")
+                
     # save the filtered keypoints to a new json file
-    save_keypoints_dict_to_json({
-        "frame_indices": np.arange(len(all_frames)),
-        "keypoints": keypoints_filtered,
-        "has_person": np.array([len(f["persons"]) > 0 for f in all_frames])
-    }, filtered_json_output_path, model_type="wholebody")
-
-    # Extract and print keypoints for the first frame with detections
-    if all_results:
-        frame_idx, pose_results = all_results[0]
-        keypoints = processor.extract_keypoints(pose_results)
-        print(f"\nFrame {frame_idx}: Detected {len(keypoints)} person(s)")
-        for i, kp_data in enumerate(keypoints):
-            print(f"  Person {i}: {kp_data['keypoints'].shape[0]} keypoints")
+    save_keypoints_dict_to_json(
+        {
+            "frame_indices": frame_indices,
+            "keypoints": keypoints_filtered,
+            "has_person": has_person,
+        },
+        filtered_json_output_path,
+        model_type="wholebody"
+    )
     
     print("\n" + "="*60)
     print("WholeBody Pose Processor initialized successfully!")
