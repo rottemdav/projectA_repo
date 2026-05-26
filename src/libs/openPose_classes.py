@@ -8,6 +8,8 @@ from typing import Optional, List, Tuple
 from datetime import datetime
 from scipy.signal import filtfilt, butter
 
+from utils.skeleton_tracking import filter_and_track_person
+
 class Config:
     """Configuration for OpenPose estimation and post-processing."""
     
@@ -39,6 +41,7 @@ class Config:
     # ============ Visualization Parameters ============
     DRAW_PREFILTER_PEOPLE = False
     DRAW_POSTFILTER_SELECTED = True
+    DRAW_FACE = True
     DRAW_CAM2_X_LIMITS = True
     DRAW_SKELETON = False               # Decide whether to draw the skeleton or not
     
@@ -223,6 +226,15 @@ class OpenPoseProcessor:
         frame_idx = start_f
         frames_processed = 0
         start_time = time.time()
+        
+        last_known_hip_x = None
+        
+        # We extract camera number roughly from video filename, or default to None if we can't
+        video_name = os.path.splitext(os.path.basename(video_path))[0]
+        parts = video_name.split('_')
+        cam_num = None
+        if len(parts) >= 2 and parts[1].isdigit():
+            cam_num = int(parts[1])
 
         while cap.isOpened() and frame_idx <= eff_end_frame:
             ret, frame = cap.read()
@@ -232,6 +244,36 @@ class OpenPoseProcessor:
             # Estimate pose
             pose_results, datum = self.estimate_pose(frame)
             
+            keypoints_list = self.extract_keypoints(pose_results)
+            
+            # --- START FILTERING ---
+            best_person_idx = -1
+            if len(keypoints_list) > 0 and datum.poseKeypoints is not None and datum.poseKeypoints.size > 0:
+                all_kps = datum.poseKeypoints.tolist()
+                best_person_idx = filter_and_track_person(
+                    all_keypoints=all_kps,
+                    last_known_hip_x=last_known_hip_x,
+                    cam_num=cam_num,
+                    model_type="openpose",
+                    use_roi_filter=Config.USE_CAMERA_POSITION_FILTER,
+                    min_conf=Config.CONF_THRESHOLD
+                )
+                
+                if best_person_idx != -1:
+                    last_known_hip_x = all_kps[best_person_idx][8][0]
+                else:
+                    last_known_hip_x = None # Freeze or reset (going with None based on your missed-frames logic)
+            # --- END FILTERING ---
+            
+            # Filter the pose results to only keep the target person for visualization
+            if best_person_idx != -1 and pose_results is not None:
+                # Openpose C++ output arrays expect shape (-1, num_points, 3)
+                filtered_pose = np.expand_dims(pose_results[best_person_idx], axis=0)
+                datum.poseKeypoints = filtered_pose
+            else:
+                pose_results = None
+                datum.poseKeypoints = np.empty((0, 0, 0), dtype=np.float32)
+
             # Visualize
             vis_frame = self.visualize(frame, datum, show=show, draw_face=draw_face)
             all_results.append((frame_idx, pose_results))
@@ -250,8 +292,8 @@ class OpenPoseProcessor:
                 'persons': []
             }
 
-            keypoints_list = self.extract_keypoints(pose_results)
-            for person in keypoints_list:
+            if best_person_idx != -1 and best_person_idx < len(keypoints_list):
+                person = keypoints_list[best_person_idx]
                 frame_json['persons'].append({
                     'bbox': person['bbox'].tolist() if person['bbox'] is not None else None,
                     'body': {

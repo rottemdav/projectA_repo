@@ -6,6 +6,7 @@ import numpy as np
 import time
 
 import math
+from utils.skeleton_tracking import filter_and_track_person
 
 def get_dist(p1, p2):
     """
@@ -15,6 +16,57 @@ def get_dist(p1, p2):
     if p1[2] == 0 or p2[2] == 0:
         return None
     return math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
+
+def is_in_roi(keypoints, cam_num):
+    """
+    Checks if a skeleton's mid hip is within the valid Camera ROI bounds.
+    Hardcoded for cameras 1, 2, and 3.
+    """
+    mid_hip_y = keypoints[8][1]
+    mid_hip_x = keypoints[8][0]
+    
+    if cam_num == 1:
+        return mid_hip_y < 930
+    elif cam_num == 2:
+        return 1860 <= mid_hip_x <= 2380
+    elif cam_num == 3:
+        return mid_hip_y < 1200
+        
+    return False
+
+def select_best_person(all_keypoints, last_known_hip_x, cam_num, use_roi_filter=True):
+    """
+    Filters all detected people by ROI, structural validity, and tracking distance.
+    Returns the index of the best matching person.
+    """
+    best_person_idx = -1
+    min_distance = float('inf')
+
+    for i, keypoints in enumerate(all_keypoints):
+        # 1. Quality Check
+        if keypoints[8][2] < 0.4:
+            continue
+            
+        # 2. ROI Check
+        if use_roi_filter and not is_in_roi(keypoints, cam_num):
+            continue
+            
+        # 3. Structural Validity Check
+        if not is_skeleton_valid(keypoints, last_known_hip_x):
+            continue
+            
+        # 4. Distance / Tracking Check
+        mid_hip_x = keypoints[8][0]
+        if last_known_hip_x is None:
+            # First valid person initializes the tracker
+            return i
+        else:
+            distance = abs(mid_hip_x - last_known_hip_x)
+            if distance < min_distance and distance < 350:
+                min_distance = distance
+                best_person_idx = i
+                
+    return best_person_idx
 
 def is_skeleton_valid(keypoints, prev_hip_pos=None, min_conf=0.3):
     """
@@ -121,8 +173,7 @@ try:
 except Exception as e:
     print(f"Error starting OpenPose: {e}")
     sys.exit(1)
-    
-video_path = "project_files/data/source_videos/NL100/NL100_1.MP4"
+video_path = "project_files/data/source_videos/NL129/NL129_4_1.MP4"
 video_filename = os.path.splitext(os.path.basename(video_path))[0]
 cap = cv2.VideoCapture(video_path)
 

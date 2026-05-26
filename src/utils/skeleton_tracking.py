@@ -132,17 +132,6 @@ def is_skeleton_valid(keypoints, model_type="openpose", prev_hip_pos=None, min_c
         mid_hip_y = (keypoints[idx.L_HIP][1] + keypoints[idx.R_HIP][1]) / 2.0
         virtual_mid_hip = (mid_hip_x, mid_hip_y, min(keypoints[idx.L_HIP][2], keypoints[idx.R_HIP][2]))
 
-        # Region of Motion & Boundary Checks
-        if frame_width is not None and frame_height is not None:
-            if mid_hip_x < edge_margin or mid_hip_x > frame_width - edge_margin:
-                return False
-            if mid_hip_y < edge_margin or mid_hip_y > frame_height - edge_margin:
-                return False
-                
-        if roi is not None:
-            if not (roi[0] <= mid_hip_x <= roi[2] and roi[1] <= mid_hip_y <= roi[3]):
-                return False
-
         # 2. Leg completeness
         required_leg_points = [idx.R_HIP, idx.R_KNEE, idx.R_ANKLE, idx.L_HIP, idx.L_KNEE, idx.L_ANKLE]
         confident_leg_points = sum(1 for i in required_leg_points if has_conf(i))
@@ -191,6 +180,70 @@ def is_skeleton_valid(keypoints, model_type="openpose", prev_hip_pos=None, min_c
             if velocity > max_allowed_jump:
                 return False
 
-        return True
-
+def is_in_roi(keypoints, cam_num, model_type="openpose"):
+    """
+    Checks if a skeleton's mid hip is within the valid Camera ROI bounds.
+    Hardcoded for camera 1, 2, and 3.
+    """
+    if model_type == "openpose":
+        mid_hip_y = keypoints[OpenPoseIndices.MID_HIP][1]
+        mid_hip_x = keypoints[OpenPoseIndices.MID_HIP][0]
+    elif model_type == "hrnet":
+        # Calculate virtual mid-hip
+        mid_hip_x = (keypoints[HRNetIndices.L_HIP][0] + keypoints[HRNetIndices.R_HIP][0]) / 2.0
+        mid_hip_y = (keypoints[HRNetIndices.L_HIP][1] + keypoints[HRNetIndices.R_HIP][1]) / 2.0
+    else:
+        return False
+        
+    if cam_num == 1:
+        return mid_hip_y < 930
+    elif cam_num == 2:
+        return 1860 <= mid_hip_x <= 2380
+    elif cam_num == 3:
+        return mid_hip_y < 1200
+        
     return False
+
+def filter_and_track_person(all_keypoints, last_known_hip_x, cam_num, model_type="openpose", use_roi_filter=True, min_conf=0.3):
+    """
+    Filters all detected people by ROI, structural validity, and tracking distance.
+    Calls is_in_roi and is_skeleton_valid.
+    Returns the index of the best matching person.
+    """
+    best_person_idx = -1
+    min_distance = float('inf')
+
+    for i, keypoints in enumerate(all_keypoints):
+        # 1. Quality Check on Hip
+        if model_type == "openpose":
+            hip_conf = keypoints[OpenPoseIndices.MID_HIP][2]
+        else: # HRNet
+            hip_conf = min(keypoints[HRNetIndices.L_HIP][2], keypoints[HRNetIndices.R_HIP][2]) if len(keypoints) > HRNetIndices.R_HIP else 0
+            
+        if hip_conf < min_conf:
+            continue
+            
+        # 2. ROI Check
+        if use_roi_filter and not is_in_roi(keypoints, cam_num, model_type):
+            continue
+            
+        # 3. Structural Validity Check
+        if not is_skeleton_valid(keypoints, model_type=model_type, prev_hip_pos=last_known_hip_x, min_conf=min_conf):
+            continue
+            
+        # 4. Distance / Tracking Check
+        if model_type == "openpose":
+            mid_hip_x = keypoints[OpenPoseIndices.MID_HIP][0]
+        else:
+            mid_hip_x = (keypoints[HRNetIndices.L_HIP][0] + keypoints[HRNetIndices.R_HIP][0]) / 2.0
+            
+        if last_known_hip_x is None:
+            # First valid person initializes the tracker
+            return i
+        else:
+            distance = abs(mid_hip_x - last_known_hip_x)
+            if distance < min_distance and distance < 350:
+                min_distance = distance
+                best_person_idx = i
+                
+    return best_person_idx

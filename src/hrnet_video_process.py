@@ -153,7 +153,6 @@ def main():
                                                                   out_range=out_range))
     )
         
-        
     processor.write_and_visualize_filtered_video(
         all_frames=all_frames,
         filtered_keypoints=keypoints_filtered,
