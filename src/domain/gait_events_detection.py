@@ -9,7 +9,7 @@ from typing import Dict
 # Simple local extrema detection using numpy
 from scipy.signal import find_peaks, argrelextrema
 
-from project_files.projectA_repo.src.models.joint_model_mapping import BODY25_GAIT_KEYPOINTS, WHOLEBODY_GAIT_KEYPOINTS
+from src.models.joint_model_mapping import BODY25_GAIT_KEYPOINTS, WHOLEBODY_GAIT_KEYPOINTS
 
 def ankle_to_pelvis_distance(model, keypoints_dict):
     """ 
