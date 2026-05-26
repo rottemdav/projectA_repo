@@ -2,11 +2,11 @@ import cv2
 import json
 import os
 from typing import Dict, Any
-from project_files.projectA_repo.src.kinetics_2d_lib import calculate_angles, calculate_gait_parameters, calculate_spatial_parameters
+from project_files.projectA_repo.src.domain.gait_feature_extraction import calculate_angles, calculate_gait_parameters, calculate_spatial_parameters
 
 import numpy as np
 
-from project_files.projectA_repo.src.kinetics_2d_lib import WHOLEBODY_KEYPOINTS
+from project_files.projectA_repo.src.domain.gait_feature_extraction import WHOLEBODY_KEYPOINTS
 
 
 def load_keypoints_dict_from_json(json_path: str, person_mode: str = "first") -> Dict[str, Any]:
