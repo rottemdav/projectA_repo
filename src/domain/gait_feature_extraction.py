@@ -306,7 +306,91 @@ def calculate_spatial_parameters(model, keypoints, events, scaling_factor=1.0):
     
     return spatial_parameters
 
+def calculate_gait_parameters_2(keypoints, time_vector, events, scaling_factor=1.0):
 
+    #build chronological heel-strike timeline
+    hs_events = []
+
+    for e in events['lhs']:
+        hs_events.append((int(e), "left"))
+    for e in events['rhs']:
+        hs_events.append((int(e), "right"))
+
+    hs_events = sorted(hs_events, key=lambda x: x[0]) # sort by frame index
+
+    #helper to get next event index in a sorted array
+
+    def next_event_index(frames, f):
+        future_events = frames[frames > f]
+        return int(future_events[0]) if len(future_events) else None
+    
+    lhs = np.array(sorted(events['lhs']), dtype = int)
+    rhs = np.array(sorted(events['rhs']), dtype = int)
+    lto = np.array(sorted(events['lto']), dtype = int)
+    rto = np.array(sorted(events['rto']), dtype = int)
+
+    step_time = []
+    stance_time = []
+    swing_time = []
+    hs_frames = []
+    hs_sides = []
+    prev_opposite_hs_frames = []
+    to_frames = []
+    next_same_side_hs_frames = []
+
+    for i in range(len(hs_events) - 1):
+        prev_f, prev_side = hs_events[i-1]
+        curr_f, curr_side = hs_events[i]
+        next_f, next_side = hs_events[i+1]
+
+        # treat a step only if the current side and the next side alternates sides (i.e. left -> right or right -> left)
+        if curr_side == next_side:
+            continue
+
+        # calculate step time: current HS -> next opposite HS
+        step_time.append(time_vector[next_f] - time_vector[curr_f])
+        hs_frames.append(curr_f)
+        hs_sides.append(curr_side)
+
+        if curr_side == "left":
+            # calculate the frame index of toe-off and the next heel strike after that toe-off of the same side (lhs -> lto -> lhs)
+            to_f = next_event_index(lto, curr_f)
+            next_same_hs = next_event_index(lhs, curr_f)
+            prev_opposite_hs_frames.append(prev_f)  # the previous opposite-side HS frame
+            to_frames.append(to_f if to_f is not None else -1)
+            next_same_side_hs_frames.append(next_same_hs if next_same_hs is not None else -1)
+        else: 
+            # rhs -> rto -> rhs
+            to_f = next_event_index(rto, curr_f)
+            next_same_hs = next_event_index(rhs, curr_f)
+            prev_opposite_hs_frames.append(prev_f)
+            to_frames.append(to_f if to_f is not None else -1)
+            next_same_side_hs_frames.append(next_same_hs if next_same_hs is not None else -1)
+
+        # calculate stance time: current HS -> next TO (same side) - how much time the foot is on the ground
+        if to_f is not None:
+            stance_time.append(time_vector[to_f] - time_vector[curr_f])
+        else:
+            stance_time.append(np.nan)
+
+        # calculate swing time: current TO -> next same-side HS - how much time the foot is in the air
+        if to_f is not None and next_same_hs is not None:
+            swing_time.append(time_vector[next_same_hs] - time_vector[to_f])
+        else:
+            swing_time.append(np.nan)
+
+    gait_params = {
+        "hs_frames": np.array(hs_frames, dtype=int),
+        "hs_sides": np.array(hs_sides, dtype=object),
+        "prev_opposite_hs_frames": np.array(prev_opposite_hs_frames, dtype=int),
+        "to_frames": np.array(to_frames, dtype=int),
+        "next_same_side_hs_frames": np.array(next_same_side_hs_frames, dtype=int),
+        "stepTime": np.array(step_time, dtype=float),
+        "stanceTime": np.array(stance_time, dtype=float),
+        "swingTime": np.array(swing_time, dtype=float),
+    }
+    
+    return gait_params
 # ------------------ Temporal Parameters ------------------ #
 
 

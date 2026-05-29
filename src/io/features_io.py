@@ -204,3 +204,29 @@ def build_gait_step_rows_from_events(video_name, run_hash_id, lhs_frames, rhs_fr
         })
 
     return rows
+
+def build_gait_step_rows_from_events_2(video_name, run_hash_id, gait_params):
+    rows = []
+
+    for i in range(len(gait_params["hs_frames"])):
+        step_time_sec = gait_params["stepTime"][i]
+        stance_time_sec = gait_params["stanceTime"][i]
+        swing_time_sec = gait_params["swingTime"][i]
+
+        rows.append({
+            #np.array(hs_frames, dtype=int)
+            "video_id": str(video_name),
+            "run_hash_id": str(run_hash_id),
+            "global_step_index": int(i),  # i is chronological
+            "side": str(gait_params["hs_sides"][i]),
+            "hs_frame": int(gait_params["hs_frames"][i]),
+            "prev_opposite_hs_frame": int(gait_params["prev_opposite_hs_frames"][i]),
+            "to_frame": int(gait_params["to_frames"][i]),
+            "next_same_side_hs_frame": int(gait_params["next_same_side_hs_frames"][i]),
+            "step_time_s": float(step_time_sec) if step_time_sec is not None else float("nan"),
+            "stance_time_s": float(stance_time_sec) if stance_time_sec is not None else float("nan"),
+            "swing_time_s": float(swing_time_sec) if swing_time_sec is not None else float("nan"),
+            "valid": 0.25 <= float(step_time_sec) <= 1.5 if step_time_sec is not None else False,
+        })
+
+    return rows
