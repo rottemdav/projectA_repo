@@ -18,7 +18,7 @@ from src.domain.gait_events_detection import ankle_to_pelvis_distance, gait_even
 from src.domain.gait_feature_extraction import calculate_gait_parameters, calculate_spatial_parameters
 from plotting.plot_gait_events_detection_timeseries import plot_ankle_to_pelvis_distance, save_figure
 from src.models.joint_model_mapping import BODY25_GAIT_KEYPOINTS, WHOLEBODY_GAIT_KEYPOINTS
-from src.io.features_io import STEP_EVENTS_SCHEMA, VIDEO_SUMMARY_SCHEMA, build_steps_rows
+from src.io.features_io import STEP_EVENTS_SCHEMA, VIDEO_SUMMARY_SCHEMA, build_gait_step_rows_from_events, build_steps_rows, STEP_EVENT_COLUMNS
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Gait Events Detection from HRNet Keypoints")
@@ -121,38 +121,28 @@ for param_name, param_value in spatial_params.items():
 
 # Map event indices -> frame numbers
 frame_indices = np.array(keypoints_dict["frame_indices"])
+
 lhs_frames = frame_indices[gait_events["lhs"]]
 lto_frames = frame_indices[gait_events["lto"]]
 rhs_frames = frame_indices[gait_events["rhs"]]
 rto_frames = frame_indices[gait_events["rto"]]
 
-step_rows = []
-
-step_rows += build_steps_rows(
-    video_name,
-    run_hash_id,
-    "left",
-    lhs_frames,
-    lto_frames,
-    gait_params["stepTime"]["left"],
-    gait_params["stanceTime"]["left"],
-    gait_params["swingTime"]["left"],
-    spatial_params["stepLength"]["left"],
+step_rows = build_gait_step_rows_from_events(
+    video_name=video_name,
+    run_hash_id=run_hash_id,
+    lhs_frames=lhs_frames,
+    rhs_frames=rhs_frames,
+    lto_frames=lto_frames,
+    rto_frames=rto_frames,
+    fps=fps,
 )
 
-step_rows += build_steps_rows(
-    video_name,
-    run_hash_id,
-    "right",
-    rhs_frames,
-    rto_frames,
-    gait_params["stepTime"]["right"],
-    gait_params["stanceTime"]["right"],
-    gait_params["swingTime"]["right"],
-    spatial_params["stepLength"]["right"],
-)
 
-steps_df = pd.DataFrame(step_rows)
+print("Number of step rows:", len(step_rows))
+steps_df = pd.DataFrame(step_rows, columns=STEP_EVENT_COLUMNS)
+print("steps_df shape:", steps_df.shape)
+print("steps_df columns:", steps_df.columns.tolist())
+print(steps_df.head())
 
 steps_table = pa.Table.from_pandas(steps_df, schema=STEP_EVENTS_SCHEMA, preserve_index=False)
 

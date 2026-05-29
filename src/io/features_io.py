@@ -3,18 +3,20 @@ import pyarrow as pa
 STEP_EVENTS_SCHEMA = pa.schema([
     ("video_id", pa.string()),
     ("run_hash_id", pa.string()),
-    ("frame_index", pa.int32()),  # use hs_frame as the join key
+    ("global_step_index", pa.int64()),
     ("side", pa.string()),
-    ("event_index", pa.int32()),
-    ("hs_frame", pa.int32()),
-    ("to_frame", pa.int32()),
-    ("step_time_s", pa.float32()),
-    ("stance_time_s", pa.float32()),
-    ("swing_time_s", pa.float32()),
-    ("step_length_px", pa.float32()),
+
+    ("hs_frame", pa.int64()),
+    ("prev_opposite_hs_frame", pa.int64()),
+    ("to_frame", pa.int64()),
+    ("next_same_side_hs_frame", pa.int64()),
+
+    ("step_time_s", pa.float64()),
+    ("stance_time_s", pa.float64()),
+    ("swing_time_s", pa.float64()),
+
     ("valid", pa.bool_()),
 ])
-
 VIDEO_SUMMARY_SCHEMA = pa.schema([
     ("video_id", pa.string()),
     ("run_hash_id", pa.string()),
@@ -34,6 +36,23 @@ VIDEO_SUMMARY_SCHEMA = pa.schema([
     ("std_step_length_left_px", pa.float32()),
     ("schema_version", pa.string()),
 ])
+
+STEP_EVENT_COLUMNS = [
+    "video_id",
+    "run_hash_id",
+    "global_step_index",
+    "side",
+    "hs_frame",
+    "prev_opposite_hs_frame",
+    "to_frame",
+    "next_same_side_hs_frame",
+    "step_time_s",
+    "stance_time_s",
+    "swing_time_s",
+    "valid",
+]
+
+# FIXME: old version, to be removed after testing
 
 def build_steps_rows(video_id, run_hash_id, side, hs_frames, to_frames,
                      step_time, stance_time, swing_time, step_length):
@@ -55,4 +74,133 @@ def build_steps_rows(video_id, run_hash_id, side, hs_frames, to_frames,
             "step_length_px": float(step_length[i]),
             "valid": True,
         })
+    return rows
+
+# FIXME end
+
+def compute_stance_swing_for_side(hs_frames, to_frames, fps):
+    hs_frames = sorted(hs_frames)
+    to_frames = sorted(to_frames)
+
+    rows = []
+
+    for hs in hs_frames:
+        # first toe-off after this heel strike
+        next_to_candidates = [to for to in to_frames if to > hs]
+        if not next_to_candidates:
+            continue
+
+        to = next_to_candidates[0]
+
+        # first heel strike after that toe-off
+        next_hs_candidates = [h for h in hs_frames if h > to]
+        if not next_hs_candidates:
+            continue
+
+        next_hs = next_hs_candidates[0]
+
+        rows.append({
+            "hs_frame": hs,
+            "to_frame": to,
+            "next_hs_frame": next_hs,
+            "stance_time_s": (to - hs) / fps,
+            "swing_time_s": (next_hs - to) / fps,
+        })
+
+    return rows
+
+def build_gait_step_rows_from_events(video_name, run_hash_id, lhs_frames, rhs_frames, lto_frames, rto_frames, fps):
+    rows = []
+
+    #build chronological heel-strike sequence 
+    hs_events = []
+
+    for frame in lhs_frames:
+        hs_events.append((frame, "left"))
+
+    for frame in rhs_frames:
+        hs_events.append((frame, "right"))
+
+    hs_events = sorted(hs_events)
+
+    #compute step time
+    step_time_by_hs = {}
+    global_step_index = 0
+
+    for i in range (1, len(hs_events)):
+        prev_frame, prev_side = hs_events[i-1]
+        curr_frame, curr_side = hs_events[i]
+
+        if prev_side == curr_side:
+            continue
+
+        step_time_s = (curr_frame - prev_frame) / fps
+
+        step_time_by_hs[(curr_side, curr_frame)] = {
+            "step_time_s": step_time_s,
+            "prev_opposite_hs_frame": prev_frame,
+            "global_step_index": global_step_index,
+        }
+
+        global_step_index += 1
+
+    #compute stance/swing for each side
+    left_phase = compute_stance_swing_for_side(lhs_frames, lto_frames, fps)
+    right_phase = compute_stance_swing_for_side(rhs_frames, rto_frames, fps)
+
+    phase_by_hs = {}
+
+    for row in left_phase:
+        phase_by_hs[("left", row["hs_frame"])] = row
+
+    for row in right_phase:
+        phase_by_hs[("right", row["hs_frame"])] = row
+
+    print("len(lhs_frames):", len(lhs_frames))
+    print("len(rhs_frames):", len(rhs_frames))
+    print("len(lto_frames):", len(lto_frames))
+    print("len(rto_frames):", len(rto_frames))
+
+    print("len(hs_events):", len(hs_events))
+    print("len(step_time_by_hs):", len(step_time_by_hs))
+    print("len(left_phase):", len(left_phase))
+    print("len(right_phase):", len(right_phase))
+    print("len(phase_by_hs):", len(phase_by_hs))
+
+    step_keys = set(step_time_by_hs.keys())
+    phase_keys = set(phase_by_hs.keys())
+
+    print("intersection:", len(step_keys & phase_keys))
+    print("step only example:", list(step_keys - phase_keys)[:10])
+    print("phase only example:", list(phase_keys - step_keys)[:10])
+
+    for hs_frame,side in hs_events:
+        step_info = step_time_by_hs.get((side, hs_frame))
+        phase_info = phase_by_hs.get((side, hs_frame))
+
+        if step_info is None or phase_info is None:
+            continue
+
+        rows.append({
+            "video_id": video_name,
+            "run_hash_id": run_hash_id,
+            "global_step_index": step_info["global_step_index"],
+            "side": side,
+
+            "hs_frame": hs_frame,
+            "prev_opposite_hs_frame": step_info["prev_opposite_hs_frame"],
+            "to_frame": phase_info["to_frame"],
+            "next_same_side_hs_frame": phase_info["next_hs_frame"],
+
+            "step_time_s": step_info["step_time_s"],
+            "stance_time_s": phase_info["stance_time_s"],
+            "swing_time_s": phase_info["swing_time_s"],
+
+            "valid": (
+                0.25 <= step_info["step_time_s"] <= 1.5 
+                #0.2 <= phase_info["stance_time_s"] <= 2.0 and
+                #0.2 <= phase_info["swing_time_s"] <= 2.0
+            ),
+        })
+
     return rows
