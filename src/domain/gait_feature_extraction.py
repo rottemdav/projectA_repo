@@ -144,6 +144,7 @@ def calculate_angles(model, keypoints):
 
     return angles
 
+# FIXME: old version - delete
 def calculate_gait_parameters(keypoints, time_vector, events, scaling_factor=1.0):
     """
     - LHS - Left Heel Strike
@@ -272,6 +273,7 @@ def calculate_gait_parameters(keypoints, time_vector, events, scaling_factor=1.0
         gait_params['gaitSpeed'] = 0.0
 
     return gait_params
+# FIXME: end
 
 def calculate_spatial_parameters(model, keypoints, events, scaling_factor=1.0):
     """
@@ -305,6 +307,7 @@ def calculate_spatial_parameters(model, keypoints, events, scaling_factor=1.0):
     spatial_parameters['stepLength']['left'] = np.abs(scaling_factor * (l_pos_at_lhs - r_pos_at_lhs))
     
     return spatial_parameters
+
 
 def calculate_gait_parameters_2(keypoints, time_vector, events, scaling_factor=1.0):
 
@@ -389,7 +392,7 @@ def calculate_gait_parameters_2(keypoints, time_vector, events, scaling_factor=1
         "stanceTime": np.array(stance_time, dtype=float),
         "swingTime": np.array(swing_time, dtype=float),
     }
-    
+
     return gait_params
 # ------------------ Temporal Parameters ------------------ #
 

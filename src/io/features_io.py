@@ -1,6 +1,6 @@
 import pyarrow as pa
 
-STEP_EVENTS_SCHEMA = pa.schema([
+TEMPORAL_STEP_EVENTS_SCHEMA = pa.schema([
     ("video_id", pa.string()),
     ("run_hash_id", pa.string()),
     ("global_step_index", pa.int64()),
@@ -17,6 +17,22 @@ STEP_EVENTS_SCHEMA = pa.schema([
 
     ("valid", pa.bool_()),
 ])
+
+SPATIAL_STEP_EVENTS_SCHEMA = pa.schema([
+    ("video_id", pa.string()),
+    ("run_hash_id", pa.string()),
+    ("global_step_index", pa.int64()),
+    ("side", pa.string()),
+
+    ("hs_frame", pa.int64()),
+    ("prev_opposite_hs_frame", pa.int64()),
+    ("to_frame", pa.int64()),
+    ("next_same_side_hs_frame", pa.int64()),
+
+    ("step_length_px", pa.float64()),
+
+])
+
 VIDEO_SUMMARY_SCHEMA = pa.schema([
     ("video_id", pa.string()),
     ("run_hash_id", pa.string()),
@@ -50,6 +66,18 @@ STEP_EVENT_COLUMNS = [
     "stance_time_s",
     "swing_time_s",
     "valid",
+]
+
+SPATIAL_EVENT_COLUMNS = [
+    "video_id",
+    "run_hash_id",
+    "global_step_index",
+    "side",
+    "hs_frame",
+    "prev_opposite_hs_frame",
+    "to_frame",
+    "next_same_side_hs_frame",
+    "step_length_px",
 ]
 
 # FIXME: old version, to be removed after testing
@@ -108,6 +136,8 @@ def compute_stance_swing_for_side(hs_frames, to_frames, fps):
         })
 
     return rows
+
+# FIXME: old version, to be removed after testing
 
 def build_gait_step_rows_from_events(video_name, run_hash_id, lhs_frames, rhs_frames, lto_frames, rto_frames, fps):
     rows = []
@@ -205,6 +235,8 @@ def build_gait_step_rows_from_events(video_name, run_hash_id, lhs_frames, rhs_fr
 
     return rows
 
+# FIXME end
+
 def build_gait_step_rows_from_events_2(video_name, run_hash_id, gait_params):
     rows = []
 
@@ -227,6 +259,40 @@ def build_gait_step_rows_from_events_2(video_name, run_hash_id, gait_params):
             "stance_time_s": float(stance_time_sec) if stance_time_sec is not None else float("nan"),
             "swing_time_s": float(swing_time_sec) if swing_time_sec is not None else float("nan"),
             "valid": 0.25 <= float(step_time_sec) <= 1.5 if step_time_sec is not None else False,
+        })
+
+    return rows
+
+def build_spatial_step_rows_from_events(video_name, run_hash_id, gait_params, spatial_params):
+    rows = []
+
+    # side-specific arrays
+    step_len_left = spatial_params["stepLength"]["left"]
+    step_len_right = spatial_params["stepLength"]["right"]
+
+    left_idx = 0
+    right_idx = 0
+
+    for i in range(len(gait_params["hs_frames"])):
+        side = gait_params["hs_sides"][i]
+
+        if side == "left":
+            step_length_px = step_len_left[left_idx] if left_idx < len(step_len_left) else None
+            left_idx += 1
+        else:
+            step_length_px = step_len_right[right_idx] if right_idx < len(step_len_right) else None
+            right_idx += 1
+
+        rows.append({
+            "video_id": str(video_name),
+            "run_hash_id": str(run_hash_id),
+            "global_step_index": int(i),
+            "side": str(side),
+            "hs_frame": int(gait_params["hs_frames"][i]),
+            "prev_opposite_hs_frame": int(gait_params["prev_opposite_hs_frames"][i]),
+            "to_frame": int(gait_params["to_frames"][i]),
+            "next_same_side_hs_frame": int(gait_params["next_same_side_hs_frames"][i]),
+            "step_length_px": float(step_length_px) if step_length_px is not None else float("nan"),
         })
 
     return rows

@@ -18,7 +18,8 @@ from src.domain.gait_events_detection import ankle_to_pelvis_distance, gait_even
 from src.domain.gait_feature_extraction import calculate_gait_parameters, calculate_gait_parameters_2, calculate_spatial_parameters
 from plotting.plot_gait_events_detection_timeseries import plot_ankle_to_pelvis_distance, save_figure
 from src.models.joint_model_mapping import BODY25_GAIT_KEYPOINTS, WHOLEBODY_GAIT_KEYPOINTS
-from src.io.features_io import STEP_EVENTS_SCHEMA, VIDEO_SUMMARY_SCHEMA, build_gait_step_rows_from_events, build_gait_step_rows_from_events_2, build_steps_rows, STEP_EVENT_COLUMNS
+from src.io.features_io import (TEMPORAL_STEP_EVENTS_SCHEMA, VIDEO_SUMMARY_SCHEMA, SPATIAL_STEP_EVENTS_SCHEMA, SPATIAL_EVENT_COLUMNS, STEP_EVENT_COLUMNS,
+                                build_gait_step_rows_from_events, build_gait_step_rows_from_events_2, build_steps_rows, build_spatial_step_rows_from_events)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Gait Events Detection from HRNet Keypoints")
@@ -139,20 +140,32 @@ step_rows = build_gait_step_rows_from_events_2(
     gait_params=gait_params,
 )
 
+spatial_rows = build_spatial_step_rows_from_events(
+    video_name=video_name,
+    run_hash_id=run_hash_id,
+    gait_params=gait_params,
+    spatial_params=spatial_params,
+)
+
 print("Number of step rows:", len(step_rows))
 steps_df = pd.DataFrame(step_rows, columns=STEP_EVENT_COLUMNS)
-print("steps_df shape:", steps_df.shape)
-print("steps_df columns:", steps_df.columns.tolist())
-print(steps_df.head())
+spatial_df = pd.DataFrame(spatial_rows, columns=SPATIAL_EVENT_COLUMNS)
+#print("steps_df shape:", steps_df.shape)
+#print("steps_df columns:", steps_df.columns.tolist())
+#print(steps_df.head())
 
-steps_table = pa.Table.from_pandas(steps_df, schema=STEP_EVENTS_SCHEMA, preserve_index=False)
+steps_table = pa.Table.from_pandas(steps_df, schema=TEMPORAL_STEP_EVENTS_SCHEMA, preserve_index=False)
+spatial_table = pa.Table.from_pandas(spatial_df, schema=SPATIAL_STEP_EVENTS_SCHEMA, preserve_index=False)
 
 if args._get_args:
     os.makedirs(f"/home/projects/sipl-prj10496/project_files/outputs/hrnet_wholebody_output/{run_hash_id}", exist_ok=True)
 
 features_dir = f"/home/projects/sipl-prj10496/project_files/outputs/hrnet_wholebody_output/{run_hash_id}"
+
 steps_path = f"{features_dir}/{video_name}_steps.parquet"
+spatial_features_path = f"{features_dir}/{video_name}_spatial.parquet"
 pq.write_table(steps_table, steps_path)
+pq.write_table(spatial_table, spatial_features_path)
 
 left_mask = gait_params["hs_sides"] == "left"
 right_mask = gait_params["hs_sides"] == "right"
@@ -180,5 +193,6 @@ summary_df = pd.DataFrame([{
 summary_table = pa.Table.from_pandas(summary_df, schema=VIDEO_SUMMARY_SCHEMA, preserve_index=False)
 summary_path = f"{features_dir}/{video_name}_summary.parquet"
 pq.write_table(summary_table, summary_path)
-print(f"Saved step events to {steps_path}")
+print(f"Saved temporal step features to {steps_path}")
 print(f"Saved video summary to {summary_path}")
+print(f"Saved spatial features to {spatial_features_path}")

@@ -513,6 +513,20 @@ class WholeBodyPoseProcessor:
         frames_written = 0
         frames_visualized = 0
         print(f"[Visualization] Starting to write filtered video from frame {start_frame} to {end_frame}...")
+
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        if end_frame is None:
+            # Prefer the last keypoint frame if available, else use video length
+            if frame_to_kp:
+                end_frame = min(max(frame_to_kp.keys()), total_frames - 1)
+            else:
+                end_frame = total_frames - 1
+        else:
+            end_frame = min(end_frame, total_frames - 1)
+
+        if end_frame < start_frame:
+            raise ValueError(f"end_frame {end_frame} < start_frame {start_frame}")
         
         for frame_idx in tqdm(range(start_frame, end_frame + 1), total=end_frame - start_frame + 1):
             ret, frame = cap.read()
