@@ -14,8 +14,9 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from src.config import Config  
-from src.models.hrnet_video_process import hrnet_pose_estimation, keypoint_post_process, create_filtered_video
-from src.libs.hrnet_classes import KeypointPostProcessor, WholeBodyPoseProcessor, HAS_MMDET
+#from src.models.hrnet_video_process import hrnet_pose_estimation, keypoint_post_process, create_filtered_video
+#from src.models.openPose_video_process import openpose_pose_estimation
+#from src.libs.hrnet_classes import KeypointPostProcessor, WholeBodyPoseProcessor, HAS_MMDET
 from src.io.keypoints_io import load_keypoints_dict_from_json, save_keypoints_dict_to_json
 
 def parse_args():
@@ -42,80 +43,108 @@ def parse_args():
                         type=str,
                         default=None,
                         help="Path to existing keypoints json output to use when --skip_processing is set. If not provided, will look for json output in the default location based on input video name and frame range.")
+    parser.add_argument("--model",
+                        type=str,
+                        choices=["hrnet", "openpose"],
+                        default="hrnet",
+                        help="Which pose estimation model to use (default: hrnet)")
     return parser.parse_args()
+
 
 def main():
     """Main function demonstrating WholeBody pose estimation usage."""
     args = parse_args()
+    print(f"\n args.model: {args.model}")
 
     Config.INPUT_PATH = args.input
     Config.START_FRAME = args.start
     Config.END_FRAME = args.end
+    Config.set_active_model(args.model)
+    Config.VIDEO_NAME = os.path.splitext(os.path.basename(Config.INPUT_PATH))[0]
+    Config.FRAME_RANGE = Config.build_frame_range()
+    Config.set_active_model(args.model)    
+    Config.OUTPUT_DIR = Config.get_output_dir()
+    output_dir = Config.get_output_dir()
 
-    # ============ Process Video ============
-    # FIXME: move this to utils or config file, and make it more flexible to handle different output naming conventions
-    video_path = Config.INPUT_PATH
-    video_name = os.path.splitext(os.path.basename(video_path))[0]
-    # output file name config: use end_frame in output filename if set, else max_frames, else till end
-    if Config.END_FRAME is not None:
-        out_range = f"{Config.START_FRAME}_to_{Config.END_FRAME}"
-    elif Config.MAX_FRAMES is not None:
-        out_range = f"{Config.START_FRAME}_to_{Config.START_FRAME + Config.MAX_FRAMES - 1}"
-    else:
-        out_range = f"{Config.START_FRAME}_to_end"
-    output_path = os.path.join(Config.OUTPUT_DIR,
-                               Config.hrnet.VIDEO_FILENAME_FORMAT.format(video_name=video_name,
-                                                                   DATE=Config.DATE,
-                                                                    out_range=out_range))
-    
-    filtered_output_path = os.path.join(Config.OUTPUT_DIR,
-                                        Config.hrnet.FILTERED_VIDEO_FILENAME_FORMAT.format(video_name=video_name, DATE=Config.DATE, out_range=out_range))
-    
-    json_output_path = os.path.join(Config.OUTPUT_DIR,
-                                    Config.hrnet.JSON_FILENAME_FORMAT.format(video_name=video_name, DATE=Config.DATE, out_range=out_range))
-    
-    filtered_json_output_path = os.path.join(Config.OUTPUT_DIR,
-                                            Config.hrnet.FILTERED_JSON_FILENAME_FORMAT.format(video_name=video_name, DATE=Config.DATE, out_range=out_range))
-
-    # FIXME: move this to utils or config file, and make it more flexible to handle different output naming conventions
-
-    if args.skip_processing:
-        print("Skipping video processing step. Loading keypoints from existing json output...")
-        # Load keypoints from existing json output
-        if args.existing_json:
-            json_path = args.existing_json
-        else:
-            # quit the program if no existing json path is provided
-            print("Error: --existing_json must be provided when --skip_processing is set.")
-            return
-
-        loaded = load_keypoints_dict_from_json(json_path, model_type="wholebody")
-        keypoints_arr = loaded["keypoints"]  # shape (N, 133, 3)
-        frame_indices = loaded["frame_indices"]
-        has_person = loaded["has_person"]
-
-    else:
-        keypoints_arr, all_frames = hrnet_pose_estimation(input=Config.INPUT_PATH, start_frame=Config.START_FRAME, end_frame=Config.END_FRAME)
-    
-    # post-processing: temporal filtering
-    keypoints_filtered = keypoint_post_process(keypoints_arr, video_name, out_range)
-    if not args.skip_processing:
-        create_filtered_video(all_frames, keypoints_filtered, video_path, video_name, out_range)
-                
-    # save the filtered keypoints to a new json file
-    if not args.skip_processing:
-        frame_indices = keypoints_filtered[:, 0, 0].tolist()  # Assuming frame index is stored in the first keypoint's x-coordinate after processing
-        has_person = (keypoints_filtered[:, 0, 2] > Config.hrnet.CONF_THRESHOLD).tolist()  # Assuming confidence is stored in the first keypoint's confidence after processing
-        
-    save_keypoints_dict_to_json(
-        {
-            "frame_indices": frame_indices,
-            "keypoints": keypoints_filtered,
-            "has_person": has_person,
-        },
-        filtered_json_output_path,
-        model_type="wholebody"
+    output_path = os.path.join(
+    output_dir,
+    Config.ACTIVE_MODEL.FILTERED_JSON_FILENAME_FORMAT.format(
+        video_name=Config.VIDEO_NAME,
+        DATE=Config.DATE,
+        out_range=Config.FRAME_RANGE,
+        ),
     )
+
+    if args.model == "hrnet":
+        from src.models.hrnet_video_process import (
+            hrnet_pose_estimation, keypoint_post_process, create_filtered_video
+    )
+    elif args.model == "openpose":
+        from src.models.openPose_video_process import openpose_pose_estimation 
+
+# ============ Process Video ============
+
+# ================================= hrnet pose estimation and post-processing =================================
+    if args.model == "hrnet":
+        print ("Running HRNet pose estimation...")
+        print("\n" + "="*60)
+        if args.skip_processing:
+            print("Skipping video processing step. Loading keypoints from existing json output...")
+            # Load keypoints from existing json output
+            if args.existing_json:
+                json_path = args.existing_json
+            else:
+                # quit the program if no existing json path is provided
+                print("Error: --existing_json must be provided when --skip_processing is set.")
+                return
+
+            loaded = load_keypoints_dict_from_json(json_path, model_type="wholebody")
+            hrnet_keypoints_arr = loaded["keypoints"]  # shape (N, 133, 3)
+            frame_indices = loaded["frame_indices"]
+            has_person = loaded["has_person"]
+
+        else:
+            hrnet_keypoints_arr, all_frames, frame_indices, has_person,processor = hrnet_pose_estimation(Config.INPUT_PATH, Config.START_FRAME, Config.END_FRAME)
+            if hrnet_keypoints_arr is None:
+                return    
+            
+        # post-processing: temporal filtering
+        keypoints_filtered = keypoint_post_process(hrnet_keypoints_arr, Config.VIDEO_NAME, Config.FRAME_RANGE)
+        if not args.skip_processing:
+            create_filtered_video(processor, all_frames, keypoints_filtered, Config.INPUT_PATH, Config.VIDEO_NAME, Config.FRAME_RANGE)
+                    
+        # save the filtered keypoints to a new json file
+            
+        save_keypoints_dict_to_json(
+            {
+                "frame_indices": frame_indices,
+                "keypoints": keypoints_filtered,
+                "has_person": has_person,
+            },
+            output_path,
+            model_type="wholebody"
+        )
+
+# ================================= openpose pose estimation and post-processing =================================
+    elif args.model == "openpose":
+        print ("Running OpenPose pose estimation...")
+        print("\n" + "="*60)
+        print("\n")
+        print("the process will save the keypoints extracted by OpenPose to a json file to the path: ", output_path)
+        kp_filtered, kp_unfiltered = openpose_pose_estimation(Config.INPUT_PATH, Config.START_FRAME, Config.END_FRAME)
+        op_keypoints_arr = kp_filtered
+
+        save_keypoints_dict_to_json(
+            {
+                "frame_indices": list(range(Config.START_FRAME, Config.END_FRAME + 1)),
+                "keypoints": op_keypoints_arr,
+                "has_person": [True] * len(op_keypoints_arr),  # OpenPose always returns keypoints for each frame, so we can assume a person is detected in all frames
+            },
+            output_path,
+            model_type="openpose"
+        )
+        if op_keypoints_arr is None:
+            return
     
     print("\n" + "="*60)
     print("WholeBody Pose Processor initialized successfully!")

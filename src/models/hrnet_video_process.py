@@ -16,18 +16,20 @@ if PROJECT_ROOT not in sys.path:
 from libs.hrnet_classes import Config, WholeBodyPoseProcessor, KeypointPostProcessor, HAS_MMDET      
 from src.io.keypoints_io import save_keypoints_dict_to_json
 
-# ===== Initialize Processor and Post-Processor =====
-processor = WholeBodyPoseProcessor(
-    pose_config=Config.hrnet.POSE_CONFIG,
-    pose_checkpoint=Config.hrnet.POSE_CHECKPOINT,
-    det_config=Config.hrnet.DET_CONFIG,
-    det_checkpoint=Config.hrnet.DET_CHECKPOINT,
-    device=Config.DEVICE,
-    bbox_thr=Config.hrnet.BBOX_THR,
-    vis_kpt_thr=Config.hrnet.VIS_KPT_THR,
-)
+def _create_processor():
+    # ===== Initialize Processor and Post-Processor =====
+    return WholeBodyPoseProcessor(
+        pose_config=Config.hrnet.POSE_CONFIG,
+        pose_checkpoint=Config.hrnet.POSE_CHECKPOINT,
+        det_config=Config.hrnet.DET_CONFIG,
+        det_checkpoint=Config.hrnet.DET_CHECKPOINT,
+        device=Config.DEVICE,
+        bbox_thr=Config.hrnet.BBOX_THR,
+        vis_kpt_thr=Config.hrnet.KPT_THR,    
+    )
 
-post_processor = KeypointPostProcessor(fs=60, conf_threshold=0.3)
+def _create_post_processor():
+    return KeypointPostProcessor(fs=60, conf_threshold=0.3)
 
 def hrnet_pose_estimation(input, start_frame, end_frame):
     
@@ -60,6 +62,7 @@ def hrnet_pose_estimation(input, start_frame, end_frame):
                                     Config.hrnet.JSON_FILENAME_FORMAT.format(video_name=video_name, DATE=Config.DATE, out_range=out_range))
     
     # FIXME 2 end
+    processor = _create_processor()
 
     all_results, all_frames = processor.process_video(
         video_path,
@@ -84,6 +87,9 @@ def hrnet_pose_estimation(input, start_frame, end_frame):
 # ===== Results Formatting =====
     keypoints_arr = processor.keypoints_to_array(all_frames)
 
+    frame_indices = [f["frame_index"] for f in all_frames]  # or whatever the frame index key is
+    has_person = [len(f["persons"]) > 0 for f in all_frames]
+
     # Extract and print keypoints for the first frame with detections
     if all_results:
         frame_idx, pose_results = all_results[0]
@@ -92,9 +98,11 @@ def hrnet_pose_estimation(input, start_frame, end_frame):
         for i, kp_data in enumerate(keypoints):
             print(f"  Person {i}: {kp_data['keypoints'].shape[0]} keypoints")
 
-    return keypoints_arr, all_frames
-    
+    return keypoints_arr, all_frames, frame_indices, has_person, processor    
+
 def keypoint_post_process(keypoints_arr,video_name, out_range):
+    post_processor = _create_post_processor()
+
     #post-processing: temporal filtering
     print("Applying temporal filtering to keypoints...")
 
@@ -115,8 +123,10 @@ def keypoint_post_process(keypoints_arr,video_name, out_range):
         fc_grid=fc_grid, score=keypoints_arr[:,:,2], conf_threshold=0.2, joints=main_joints
         )
     
-    print(f"Recommended cutoff frequency from residual analysis: {recommended_fc:.2f} Hz")
-
+    if recommended_fc is None:
+        print("Recommended cutoff frequency from residual analysis: None")
+    else:
+        print(f"Recommended cutoff frequency from residual analysis: {recommended_fc:.2f} Hz")
     #plot residual curves for body keypoints
     post_processor.plot_residual_curves(
         fcs, 
@@ -129,7 +139,7 @@ def keypoint_post_process(keypoints_arr,video_name, out_range):
 
     return keypoints_filtered
 
-def create_filtered_video(all_frames, keypoints_arr, video_path, video_name, out_range):
+def create_filtered_video(processor,all_frames, keypoints_arr, video_path, video_name, out_range):
     processor.write_and_visualize_filtered_video(
         all_frames=all_frames,
         filtered_keypoints=keypoints_arr,

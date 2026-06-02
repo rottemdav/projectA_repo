@@ -2,17 +2,18 @@
 This file contains the logic for processing videos using the OpenPose pose estimation model.
 In this stage the execution of handling missing detections and focusing on the main subject in the video is done.
 The output of the main function is a formatted keypoints dictionary that can be saved as JSON for later use.
-
-# fixme: missing of the model flow the focus on the main subject in the video.
 """
 import sys
 import os
+import numpy as np
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from libs.openPose_classes import Config, OpenPoseProcessor, KeypointPostProcessor
+from utils.skeleton_tracking import filter_and_track_person
+import utils.skeleton_tracking as st; print("skeleton_tracking:", st.__file__)
 
 def openpose_pose_estimation(input, start_frame, end_frame):
     
@@ -25,7 +26,6 @@ def openpose_pose_estimation(input, start_frame, end_frame):
 
 # ===== Process Video =====
     video_path = Config.INPUT_PATH
-    # fixme 2 start : move the output file name config to utils or config file
     video_name = os.path.splitext(os.path.basename(video_path))[0]
     if Config.END_FRAME is not None:
         out_range = f"{Config.START_FRAME}_to_{Config.END_FRAME}"
@@ -35,27 +35,136 @@ def openpose_pose_estimation(input, start_frame, end_frame):
         out_range = f"{Config.START_FRAME}_to_end"
 
     output_path = os.path.join(Config.OUTPUT_DIR,
-                                Config.VIDEO_FILENAME_FORMAT.format(video_name=video_name,
+                                Config.openpose.VIDEO_FILENAME_FORMAT.format(video_name=video_name,
                                                                     DATE=Config.DATE,
                                                                     out_range=out_range))
 
     json_output_path = os.path.join(Config.OUTPUT_DIR,
-                                    Config.JSON_FILENAME_FORMAT.format(video_name=video_name, DATE=Config.DATE, out_range=out_range))
+                                    Config.openpose.JSON_FILENAME_FORMAT.format(video_name=video_name, DATE=Config.DATE, out_range=out_range))
     
-    # fixme 2 end
-
     all_results, all_frames = processor.process_video(
         video_path=video_path,
         output_path=output_path,
-        start_frame=Config.START_FRAME,  # Start from this frame
-        max_frames=Config.MAX_FRAMES,    # None for all frames
-        end_frame=Config.END_FRAME,      # None for till end, or set for explicit range
-        draw_face=Config.DRAW_FACE,      # Set False to hide face keypoints
+        start_frame=Config.START_FRAME,
+        max_frames=Config.MAX_FRAMES,
+        end_frame=Config.END_FRAME,
+        draw_face=Config.openpose.DRAW_FACE,
         show=False,
         json_output_path=json_output_path
     )
 
-# ===== Results Formatting =====
-    keypoints_arr = processor.keypoints_to_array(all_frames)
+    # ===== Results Formatting & Spatial Tracker Shield =====
+    # We apply target tracking across all detected people to extract the main subject.
+    # This acts as our "shield" against the Frankenstein effect: isolating one person
+    # geometrically BEFORE temporal interpolation connects multiple subjects.
+    try:
+        cam_num = int(video_name.split('_')[-1])
+    except ValueError:
+        cam_num = 1
+        
+    num_frames = len(all_frames)
+    num_keypoints = 25 # BODY_25
+    keypoints_arr = np.zeros((num_frames, num_keypoints, 3), dtype=np.float32)
+    last_known_hip_x = None
 
-    return keypoints_arr
+    for t, frame in enumerate(all_frames):
+        persons = frame.get('persons', [])
+        if not persons:
+            continue
+            
+        all_kps_for_tracker = [p['keypoints'] for p in persons]
+        
+        best_idx = filter_and_track_person(
+            all_keypoints=all_kps_for_tracker,
+            last_known_hip_x=last_known_hip_x,
+            cam_num=cam_num,
+            model_type="openpose",
+            use_roi_filter=True,
+            min_conf=0.3
+        )
+        
+        if best_idx != -1:
+            best_person = persons[best_idx]
+            kp = np.array(best_person['keypoints'], dtype=np.float32)
+            sc = np.array(best_person['scores'], dtype=np.float32)
+            
+            if kp.shape[-1] == 3:
+                keypoints_arr[t, :, :2] = kp[:, :2]
+            else:
+                keypoints_arr[t, :, :2] = kp
+            keypoints_arr[t, :, 2] = sc
+            last_known_hip_x = kp[8][0] # MidHip X
+
+    # ===== Post Processing =====
+    # Run post processing (Interpolation and Butterworth)
+    # Ensure it returns both the intermediate array and final array
+    spatial_filtered_unfiltered_time_arr, keypoints_arr = keypoint_post_process(keypoints_arr, video_name, out_range)
+    
+    create_filtered_video(processor, all_frames, keypoints_arr, video_path, video_name, out_range)
+
+    # Returning both arrays so the caller can extract gait parameters without smoothing effects
+    return keypoints_arr, spatial_filtered_unfiltered_time_arr
+
+def _create_post_processor():
+    # Exactly match HRNet settings with fs=60 and conf_threshold=0.3
+    return KeypointPostProcessor(fs=60, conf_threshold=0.3)
+
+def keypoint_post_process(keypoints_arr, video_name, out_range):
+    post_processor = _create_post_processor()
+
+    print("Applying temporal filtering to keypoints...")
+
+    # 1. Fill missing keypoints (Interpolation logic matching HRNet precisely)
+    # This preserves the intermediate data AFTER spatial tracker validation but BEFORE Butterworth
+    keypoints_filled = post_processor.fill_missing_keypoints(keypoints_arr)
+
+    # Intermediate Step Preservation:
+    # Save a separate copy of the array post-interpolation but pre-Butterworth
+    spatial_filtered_unfiltered_time_arr = keypoints_filled.copy()
+
+    # 2. Apply temporal low-pass filter (Butterworth exactly matched: fc=3.0, order=4)
+    fc = 3.0  # Cutoff frequency in Hz
+    keypoints_filtered = post_processor.temporal_filter(keypoints_filled, fc=fc, order=4)
+
+    # 3. Compute residuals specifically pointing to openpose BODY_25 (not WholeBody)
+    fc_grid = np.arange(1.0, 20.5, 0.5)
+    foot_idx = OpenPoseProcessor.FOOT_INDICES
+    body_idx = OpenPoseProcessor.BODY_INDICES
+    main_joints = [ *body_idx, *foot_idx ]
+    
+    knee_fcs, fcs, rms_curves, recommended_fc = post_processor.calc_fc_residual(
+        keypoints_arr, filter_func=post_processor.butterworth_lpf,
+        fc_grid=fc_grid, score=keypoints_arr[:,:,2], conf_threshold=0.3, joints=main_joints
+    )
+    
+    if recommended_fc is None:
+        print("Recommended cutoff frequency from residual analysis: None")
+    else:
+        print(f"Recommended cutoff frequency from residual analysis: {recommended_fc:.2f} Hz")
+
+    try:
+        post_processor.plot_residual_curves(
+            fcs, 
+            np.nanmean(rms_curves[main_joints,:,:], axis=0).squeeze(), 
+            save_path=os.path.join(Config.OUTPUT_DIR, 
+                                   Config.openpose.RESIDUAL_PLOT_FORMAT.format(video_name=video_name,
+                                                                      DATE=Config.DATE,
+                                                                      out_range=out_range))
+        )
+    except Exception as e:
+        print(f"Failed to plot residual curves: {e}")
+
+    return spatial_filtered_unfiltered_time_arr, keypoints_filtered
+
+def create_filtered_video(processor, all_frames, keypoints_arr, video_path, video_name, out_range):
+    processor.write_and_visualize_filtered_video(
+        all_frames=all_frames,
+        filtered_keypoints=keypoints_arr,
+        video_path=video_path,
+        output_path=os.path.join(Config.OUTPUT_DIR,
+                                    Config.openpose.FILTERED_VIDEO_FILENAME_FORMAT.format(video_name=video_name, DATE=Config.DATE, out_range=out_range)),
+        start_frame=Config.START_FRAME,
+        end_frame=Config.END_FRAME,
+        draw_face=Config.openpose.DRAW_FACE,
+        show=False
+    )

@@ -54,8 +54,8 @@ def is_skeleton_valid(keypoints, model_type="openpose", prev_hip_pos=None, min_c
         idx = OpenPoseIndices
         
         def has_conf(i):
-            return keypoints[i][2] >= min_conf
-
+            return len(keypoints) > i and len(keypoints[i]) >= 3 and keypoints[i][2] >= min_conf
+        
         # 1. Require MidHip
         if not has_conf(idx.MID_HIP):
             return False
@@ -186,6 +186,8 @@ def is_in_roi(keypoints, cam_num, model_type="openpose"):
     Hardcoded for camera 1, 2, and 3.
     """
     if model_type == "openpose":
+        if len(keypoints) <= OpenPoseIndices.MID_HIP:
+            return False
         mid_hip_y = keypoints[OpenPoseIndices.MID_HIP][1]
         mid_hip_x = keypoints[OpenPoseIndices.MID_HIP][0]
     elif model_type == "hrnet":
@@ -214,8 +216,16 @@ def filter_and_track_person(all_keypoints, last_known_hip_x, cam_num, model_type
     min_distance = float('inf')
 
     for i, keypoints in enumerate(all_keypoints):
+    #    if i == 0:
+    #        print("keypoints outer len:", len(keypoints))
+    #        if len(keypoints) > 0:
+    #            print("keypoints[0] len:", len(keypoints[0]), "value:", keypoints[0])
+    #        if len(keypoints) > OpenPoseIndices.MID_HIP:
+    #            print("mid_hip entry:", keypoints[OpenPoseIndices.MID_HIP])
         # 1. Quality Check on Hip
         if model_type == "openpose":
+            if len(keypoints) <= OpenPoseIndices.MID_HIP or len(keypoints[OpenPoseIndices.MID_HIP]) < 3:
+                continue
             hip_conf = keypoints[OpenPoseIndices.MID_HIP][2]
         else: # HRNet
             hip_conf = min(keypoints[HRNetIndices.L_HIP][2], keypoints[HRNetIndices.R_HIP][2]) if len(keypoints) > HRNetIndices.R_HIP else 0

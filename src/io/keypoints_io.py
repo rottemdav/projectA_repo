@@ -173,11 +173,11 @@ def save_keypoints_dict_to_json(
         ]
         expected_kpts = 133
 
-    elif model_type == "body25":
+    elif model_type == "openpose":
         sections = [(["body25"], 25)]
         expected_kpts = 25
     else:
-        raise ValueError(f"Unsupported model_type: {model_type}. Use 'wholebody' or 'body25'.")
+        raise ValueError(f"Unsupportedd model_type: {model_type}. Use 'wholebody' or 'body25'.")
 
     if n_kpts != expected_kpts:
         raise ValueError(

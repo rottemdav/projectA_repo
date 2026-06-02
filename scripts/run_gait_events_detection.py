@@ -20,6 +20,7 @@ from plotting.plot_gait_events_detection_timeseries import plot_ankle_to_pelvis_
 from src.models.joint_model_mapping import BODY25_GAIT_KEYPOINTS, WHOLEBODY_GAIT_KEYPOINTS
 from src.io.features_io import (TEMPORAL_STEP_EVENTS_SCHEMA, VIDEO_SUMMARY_SCHEMA, SPATIAL_STEP_EVENTS_SCHEMA, SPATIAL_EVENT_COLUMNS, STEP_EVENT_COLUMNS,
                                 build_gait_step_rows_from_events, build_gait_step_rows_from_events_2, build_steps_rows, build_spatial_step_rows_from_events)
+from src.config import Config  
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Gait Events Detection from HRNet Keypoints")
@@ -37,7 +38,12 @@ def parse_args():
     parser.add_argument("--new_output",
                         action='store_true',
                         help="Whether to use the new version of gait parameter calculation and step row building functions.")
-
+    parser.add_argument("--model",
+                        type=str,
+                        choices=["hrnet", "openpose"],
+                        default="hrnet",
+                        help="Which pose estimation model was used for the input keypoints (default: hrnet). This will determine the expected keypoint format and which joints are used for gait event detection.")
+    
     return parser.parse_args()
 
 
@@ -77,7 +83,19 @@ video_name = Path(input_path).stem.split("_keypoints")[0]
 run_hash_id = Path(input_path).parent.name
 if args.new_output:
     run_hash_id = DATE
-output_path = f"/home/projects/sipl-prj10496/project_files/outputs/hrnet_wholebody_output/{run_hash_id}/{video_name}_gait_events_timeseries.png"
+Config.set_active_model(args.model)    
+Config.OUTPUT_DIR = Config.get_output_dir()
+
+output_path = os.path.join(
+    Config.OUTPUT_DIR,
+    Config.ACTIVE_MODEL.FILTERED_JSON_FILENAME_FORMAT.format(
+        video_name=Config.VIDEO_NAME,
+        DATE=Config.DATE,
+        out_range=Config.FRAME_RANGE,
+    ),
+)
+
+#output_path = f"/home/projects/sipl-prj10496/project_files/outputs/hrnet_wholebody_output/{run_hash_id}/{video_name}_gait_events_timeseries.png"
 fps = 60.0
 
 
@@ -158,9 +176,9 @@ steps_table = pa.Table.from_pandas(steps_df, schema=TEMPORAL_STEP_EVENTS_SCHEMA,
 spatial_table = pa.Table.from_pandas(spatial_df, schema=SPATIAL_STEP_EVENTS_SCHEMA, preserve_index=False)
 
 if args._get_args:
-    os.makedirs(f"/home/projects/sipl-prj10496/project_files/outputs/hrnet_wholebody_output/{run_hash_id}", exist_ok=True)
+    os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
 
-features_dir = f"/home/projects/sipl-prj10496/project_files/outputs/hrnet_wholebody_output/{run_hash_id}"
+features_dir = Config.OUTPUT_DIR
 
 steps_path = f"{features_dir}/{video_name}_steps.parquet"
 spatial_features_path = f"{features_dir}/{video_name}_spatial.parquet"

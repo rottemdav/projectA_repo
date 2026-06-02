@@ -6,7 +6,6 @@ import numpy as np
 import time
 
 import math
-from utils.skeleton_tracking import filter_and_track_person
 
 def get_dist(p1, p2):
     """

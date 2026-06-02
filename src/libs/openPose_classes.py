@@ -9,59 +9,8 @@ from datetime import datetime
 from scipy.signal import filtfilt, butter
 
 from utils.skeleton_tracking import filter_and_track_person
+from src.config import Config
 
-class Config:
-    """Configuration for OpenPose estimation and post-processing."""
-    
-    # ============ OpenPose Paths ============
-    OPENPOSE_ROOT = "/home/projects/sipl-prj10496/project_files/openpose"
-    OPENPOSE_PYTHON_PATH = os.path.join(OPENPOSE_ROOT, "build/python/openpose")
-    MODEL_FOLDER = os.path.join(OPENPOSE_ROOT, "models/")
-    
-    # ============ OpenPose Engine Options ============
-    # Can add other pyopenpose params here
-    NUMBER_PEOPLE_MAX = 3
-    RENDER_POSE = 1
-    
-    # ============ Tracking & Filtering Parameters ============
-    USE_CAMERA_POSITION_FILTER = True
-    
-    # Camera spatial limits
-    CAM1_Y_MAX = 930
-    CAM2_X_MIN = 1860
-    CAM2_X_MAX = 2380
-    CAM3_Y_MAX = 1200
-    
-    # Tracking logic
-    MIN_HIP_CONF = 0.4                  # Minimum MidHip confidence to start an anchor
-    CONF_THRESHOLD = 0.3                # Threshold to keep general keypoints
-    HIP_DIST_THRESHOLD = 350            # Max allowed distance jump for the hip anchor
-    RESET_LAST_KNOWN_AFTER_MISSES = 5   # Number of missed frames before resetting tracker
-    
-    # ============ Visualization Parameters ============
-    DRAW_PREFILTER_PEOPLE = False
-    DRAW_POSTFILTER_SELECTED = True
-    DRAW_FACE = True
-    DRAW_CAM2_X_LIMITS = True
-    DRAW_SKELETON = False               # Decide whether to draw the skeleton or not
-    
-    # ============ Video Processing Parameters ============
-    START_FRAME = None    # Frame to start processing from (0 = beginning)
-    MAX_FRAMES = None     # Maximum frames to process (None = all frames)
-    END_FRAME = None      # Frame to end processing (inclusive, None = till end)
-
-    # ============ I/O Configuration ============
-    DATE = datetime.now().strftime('%Y%m%d_%H%M%S')
-    
-    # filename format and directory configuration 
-    INPUT_PATH = None
-    OUTPUT_DIR = f"/home/projects/sipl-prj10496/project_files/data/openpose_output/{DATE}"
-
-    JSON_FILENAME_FORMAT = f"{{video_name}}_keypoints_{{DATE}}_{{out_range}}.json"
-    VIDEO_FILENAME_FORMAT = f"{{video_name}}_pose_{{DATE}}_{{out_range}}.mp4"
-    FILTERED_JSON_FILENAME_FORMAT = f"{{video_name}}_keypoints_filtered_{{DATE}}_{{out_range}}.json"
-    FILTERED_VIDEO_FILENAME_FORMAT = f"{{video_name}}_pose_filtered_{{DATE}}_{{out_range}}.mp4"
-    RESIDUAL_PLOT_FORMAT = f"{{video_name}}_residuals_{{DATE}}_{{out_range}}.png"
 
 
 class OpenPoseProcessor:
@@ -79,18 +28,18 @@ class OpenPoseProcessor:
     def __init__(self):
         # Try importing OpenPose dynamically based on Config path
         try:
-            sys.path.insert(0, Config.OPENPOSE_PYTHON_PATH)
+            sys.path.insert(0, Config.openpose.OPENPOSE_PYTHON_PATH)
             import pyopenpose as op
             self.op = op
         except ImportError as e:
-            print(f"Error: Could not find OpenPose library at {Config.OPENPOSE_PYTHON_PATH}")
+            print(f"Error: Could not find OpenPose library at {Config.openpose.OPENPOSE_PYTHON_PATH}")
             raise e
 
         # Configure OpenPose
         params = dict()
-        params["model_folder"] = Config.MODEL_FOLDER
-        params["number_people_max"] = Config.NUMBER_PEOPLE_MAX
-        params["render_pose"] = Config.RENDER_POSE
+        params["model_folder"] = Config.openpose.MODEL_FOLDER
+        params["number_people_max"] = Config.openpose.NUMBER_PEOPLE_MAX
+        params["render_pose"] = Config.openpose.RENDER_POSE
         
         try:
             self.opWrapper = self.op.WrapperPython()
@@ -151,7 +100,7 @@ class OpenPoseProcessor:
         Visualize pose estimation results on an image.
         Uses OpenPose native output for now, mirroring the HRNet method's existence.
         """
-        if datum is not None and hasattr(datum, 'cvOutputData') and Config.RENDER_POSE:
+        if datum is not None and hasattr(datum, 'cvOutputData') and Config.openpose.RENDER_POSE:
             vis_image = datum.cvOutputData
         else:
             vis_image = image.copy()
@@ -255,8 +204,8 @@ class OpenPoseProcessor:
                     last_known_hip_x=last_known_hip_x,
                     cam_num=cam_num,
                     model_type="openpose",
-                    use_roi_filter=Config.USE_CAMERA_POSITION_FILTER,
-                    min_conf=Config.CONF_THRESHOLD
+                    use_roi_filter=Config.openpose.USE_CAMERA_POSITION_FILTER,
+                    min_conf=Config.openpose.CONF_THRESHOLD
                 )
                 
                 if best_person_idx != -1:
@@ -418,7 +367,7 @@ class OpenPoseProcessor:
                 # For now, manually draw points to visualize.
                 for point in kp_arr:
                     x, y, score = point[0], point[1], point[2]
-                    if score > Config.CONF_THRESHOLD and not np.isnan(x) and not np.isnan(y):
+                    if score > Config.openpose.CONF_THRESHOLD and not np.isnan(x) and not np.isnan(y):
                         cv2.circle(frame, (int(x), int(y)), 4, (0, 255, 0), -1)
                         
                 writer.write(frame)

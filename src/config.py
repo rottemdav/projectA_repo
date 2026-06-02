@@ -16,11 +16,21 @@ class Config:
     DATE = datetime.now().strftime('%Y%m%d_%H%M%S')
 
     INPUT_PATH = None
+    VIDEO_NAME = None
     START_FRAME = None
     END_FRAME = None
     MAX_FRAMES = None
+    FRAME_RANGE = None
 
-    OUTPUT_DIR = f"/home/projects/sipl-prj10496/project_files/data/output/{DATE}"
+    OUTPUT_DIR = f"/home/projects/sipl-prj10496/project_files/data/outputs/{ACTIVE_MODEL}/{DATE}"
+
+    @classmethod
+    def build_frame_range(cls):
+        if cls.END_FRAME is not None:
+            return f"{cls.START_FRAME}_to_{cls.END_FRAME}"
+        if cls.MAX_FRAMES is not None:
+            return f"{cls.START_FRAME}_to_{cls.START_FRAME + cls.MAX_FRAMES - 1}"
+        return f"{cls.START_FRAME}_to_end"
 
 # =========== HRNet Model Configuration ============
     class hrnet:
@@ -76,15 +86,66 @@ class Config:
 
     class openpose:
         # Placeholder for OpenPose configuration if needed in the future
-        pass
+        # ============ OpenPose Paths ============
+        OPENPOSE_ROOT = "/home/projects/sipl-prj10496/project_files/openpose"
+        OPENPOSE_PYTHON_PATH = os.path.join(OPENPOSE_ROOT, "build/python/openpose")
+        MODEL_FOLDER = os.path.join(OPENPOSE_ROOT, "models/")
+        
+        # ============ OpenPose Engine Options ============
+        # Can add other pyopenpose params here
+        NUMBER_PEOPLE_MAX = 3
+        RENDER_POSE = 1
+        
+        # ============ Tracking & Filtering Parameters ============
+        USE_CAMERA_POSITION_FILTER = True
+        
+        # Camera spatial limits
+        CAM1_Y_MAX = 930
+        CAM2_X_MIN = 1860
+        CAM2_X_MAX = 2380
+        CAM3_Y_MAX = 1200
+        
+        # Tracking logic
+        MIN_HIP_CONF = 0.4                  # Minimum MidHip confidence to start an anchor
+        CONF_THRESHOLD = 0.3                # Threshold to keep general keypoints
+        HIP_DIST_THRESHOLD = 350            # Max allowed distance jump for the hip anchor
+        RESET_LAST_KNOWN_AFTER_MISSES = 5   # Number of missed frames before resetting tracker
+        
+        # ============ Visualization Parameters ============
+        DRAW_PREFILTER_PEOPLE = False
+        DRAW_POSTFILTER_SELECTED = True
+        DRAW_FACE = True
+        DRAW_CAM2_X_LIMITS = True
+        DRAW_SKELETON = False               # Decide whether to draw the skeleton or not
+        
+        # ============ Video Processing Parameters ============
+        START_FRAME = None    # Frame to start processing from (0 = beginning)
+        MAX_FRAMES = None     # Maximum frames to process (None = all frames)
+        END_FRAME = None      # Frame to end processing (inclusive, None = till end)
 
-@classmethod
-def set_active_model(cls, model_name):
-    if model_name.lower() == "hrnet":
-        return cls.hrnet
-    elif model_name.lower() == "openpose":
-        return cls.openpose
-    else:
-        raise ValueError(f"Unsupported model name: {model_name}. Choose 'hrnet' or 'openpose'.")
+        # ============ I/O Configuration ============
+        DATE = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        # filename format and directory configuration 
+
+        JSON_FILENAME_FORMAT = f"{{video_name}}_keypoints_{{DATE}}_{{out_range}}.json"
+        VIDEO_FILENAME_FORMAT = f"{{video_name}}_pose_{{DATE}}_{{out_range}}.mp4"
+        FILTERED_JSON_FILENAME_FORMAT = f"{{video_name}}_keypoints_filtered_{{DATE}}_{{out_range}}.json"
+        FILTERED_VIDEO_FILENAME_FORMAT = f"{{video_name}}_pose_filtered_{{DATE}}_{{out_range}}.mp4"
+        RESIDUAL_PLOT_FORMAT = f"{{video_name}}_residuals_{{DATE}}_{{out_range}}.png"
+
+    @classmethod
+    def set_active_model(cls, model_name):
+        if model_name.lower() == "hrnet":
+            cls.ACTIVE_MODEL = cls.hrnet
+        elif model_name.lower() == "openpose":
+            cls.ACTIVE_MODEL = cls.openpose
+        else:
+            raise ValueError(f"Unsupported model name: {model_name}. Choose 'hrnet' or 'openpose'.")
+        
+    @classmethod
+    def get_output_dir(cls):
+        return f"/home/projects/sipl-prj10496/project_files/data/outputs/{cls.ACTIVE_MODEL.__name__}/{cls.DATE}"
+        
+
     
-Config.hrnet.OUTPUT_PATH = os.path.join(Config.OUTPUT_DIR, "hrnet")
