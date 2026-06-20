@@ -14,7 +14,7 @@ from pathlib import Path
 from datetime import datetime
 
 from src.io.keypoints_io import load_keypoints_dict_from_json
-from src.domain.gait_events_detection import ankle_to_pelvis_distance, gait_event_detection
+from src.domain.gait_events_detection import ankle_to_pelvis_distance, gait_event_detection, infer_forward_axis_sign
 from src.domain.gait_feature_extraction import (calculate_gait_parameters, 
                                                 calculate_gait_parameters_2, 
                                                 calculate_spatial_parameters, 
@@ -47,20 +47,26 @@ def parse_args():
                         choices=["hrnet", "openpose"],
                         default="hrnet",
                         help="Which pose estimation model was used for the input keypoints (default: hrnet). This will determine the expected keypoint format and which joints are used for gait event detection.")
+    parser.add_argument("--heel_strike_extrema",
+                        type=str,
+                        choices=["min", "max"],
+                        default="min",
+                        help="Which ankle-to-pelvis signal extremum should be tagged as heel strike. Use 'min' for the current treadmill direction convention, or 'max' if visual validation shows the labels are reversed.")
     
     return parser.parse_args()
 
-def align_x_to_motion_axis(distance_data):
-    """Flip x-components so progression direction is consistently positive."""
+def align_x_to_motion_axis(distance_data, forward_axis_sign=None):
+    """Flip x-components so forward direction is consistently positive."""
     mid_pelvis_x = distance_data["mid_pelvis_loc"][:, 0]
-    if len(mid_pelvis_x) < 2:
-        return distance_data
 
-    # find the frame which the mid_pelvis is smallest (clostest to the left margin)
-    leftmost_frame = np.argmin(mid_pelvis_x)
+    if forward_axis_sign is None:
+        window_size = max(1, min(len(mid_pelvis_x) // 10, 30))
+        start_x = np.nanmedian(mid_pelvis_x[:window_size])
+        end_x = np.nanmedian(mid_pelvis_x[-window_size:])
+        motion_dx = end_x - start_x
+        forward_axis_sign = -1.0 if np.isfinite(motion_dx) and motion_dx < 0 else 1.0
 
-    # if the leftmost frame is larger than the 0, then the motion is from right to left, and we need to flip the x-axis to make it left to right (positive progression)
-    if leftmost_frame > 0:
+    if forward_axis_sign < 0:
         for key in (
             "left_ankle_distance",
             "right_ankle_distance",
@@ -69,13 +75,16 @@ def align_x_to_motion_axis(distance_data):
             "right_ankle",
         ):
             distance_data[key][:, 0] *= -1.0
-        print("Applied x-axis flip: detected right-to-left motion.")
-        direction_sign = -1.0
-    else:
-        print("No x-axis flip: detected left-to-right motion.")
-        direction_sign = 1.0
 
-    return distance_data, direction_sign    
+        for key in ("left_ankle_dx", "right_ankle_dx"):
+            if key in distance_data:
+                distance_data[key] *= -1.0
+
+        print("Applied x-axis flip: subject faces decreasing image x.")
+    else:
+        print("No x-axis flip: subject faces increasing image x.")
+
+    return distance_data
 
 DATE = datetime.now().strftime('%Y%m%d_%H%M%S')
 
@@ -110,8 +119,20 @@ plot_output_path = os.path.join(
 
 keypoints_dict = load_keypoints_dict_from_json(input_path, model_type="wholebody")
 distance_data = ankle_to_pelvis_distance("wholebody", keypoints_dict)
-distance_data = align_x_to_motion_axis(distance_data)
-gait_events = gait_event_detection(distance_data, frame_indices=keypoints_dict['frame_indices'])
+
+forward_axis_sign = infer_forward_axis_sign("wholebody", keypoints_dict)
+print("forward_axis_sign:", forward_axis_sign)
+
+distance_data = align_x_to_motion_axis(
+    distance_data,
+    forward_axis_sign=forward_axis_sign,
+)
+
+gait_events = gait_event_detection(
+    distance_data,
+    frame_indices=keypoints_dict["frame_indices"],
+    step_direction="forward",
+)
 angles = calculate_angles("wholeBody", keypoints_dict["keypoints"])
 
 print("Available angles:", angles.keys())
@@ -193,8 +214,7 @@ spatial_df = pd.DataFrame(spatial_rows, columns=SPATIAL_EVENT_COLUMNS)
 steps_table = pa.Table.from_pandas(steps_df, schema=TEMPORAL_STEP_EVENTS_SCHEMA, preserve_index=False)
 spatial_table = pa.Table.from_pandas(spatial_df, schema=SPATIAL_STEP_EVENTS_SCHEMA, preserve_index=False)
 
-if args._get_args:
-    os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
+os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
 
 features_dir = Config.OUTPUT_DIR
 

@@ -338,17 +338,17 @@ def calculate_gait_parameters_2(keypoints, time_vector, events, scaling_factor=1
     to_frames = []
     next_same_side_hs_frames = []
 
-    for i in range(len(hs_events) - 1):
+    for i in range(1, len(hs_events)):
         prev_f, prev_side = hs_events[i-1]
         curr_f, curr_side = hs_events[i]
-        next_f, next_side = hs_events[i+1]
+        #next_f, next_side = hs_events[i+1]
 
         # treat a step only if the current side and the next side alternates sides (i.e. left -> right or right -> left)
-        if curr_side == next_side:
+        if prev_side == curr_side:
             continue
 
         # calculate step time: current HS -> next opposite HS
-        step_time.append(time_vector[next_f] - time_vector[curr_f])
+        step_time.append(time_vector[curr_f] - time_vector[prev_f])
         hs_frames.append(curr_f)
         hs_sides.append(curr_side)
 
@@ -393,7 +393,7 @@ def calculate_gait_parameters_2(keypoints, time_vector, events, scaling_factor=1
     return gait_params
 # ------------------ Temporal Parameters ------------------ #
 
-def add_step_direction(source_df, distance_data):
+def add_step_direction(source_df, distance_data, stationary_threshold_px=1.0):
     steps_df = source_df.copy()
 
     dx_values = []
@@ -401,34 +401,36 @@ def add_step_direction(source_df, distance_data):
 
     for _, row in steps_df.iterrows():
         side = row["side"]
-        start = int(row["hs_frame"])
-        end = int(row["next_same_side_hs_frame"])
-
-        if end < 0 or end <= start:
-            dx_values.append(np.nan)
-            directions.append("unknown")
-            continue
+        hs_frame = int(row["hs_frame"])
 
         if side == "left":
-            signal = distance_data["left_ankle_distance"][:, 0]
+            step_signal = distance_data["left_ankle_distance"][:, 0]
+            stance_signal = distance_data["right_ankle_distance"][:, 0]
         elif side == "right":
-            signal = distance_data["right_ankle_distance"][:, 0]
+            step_signal = distance_data["right_ankle_distance"][:, 0]
+            stance_signal = distance_data["left_ankle_distance"][:, 0]
         else:
             dx_values.append(np.nan)
             directions.append("unknown")
             continue
 
-        if end >= len(signal):
+        if hs_frame < 0 or hs_frame >= len(step_signal) or hs_frame >= len(stance_signal):
             dx_values.append(np.nan)
             directions.append("unknown")
             continue
 
-        dx = signal[end] - signal[start]
+        dx = step_signal[hs_frame] - stance_signal[hs_frame]
+
+        if not np.isfinite(dx):
+            dx_values.append(np.nan)
+            directions.append("unknown")
+            continue
+
         dx_values.append(float(dx))
 
-        if dx > 0:
+        if dx > stationary_threshold_px:
             directions.append("forward")
-        elif dx < 0:
+        elif dx < -stationary_threshold_px:
             directions.append("backward")
         else:
             directions.append("stationary")
