@@ -110,7 +110,6 @@ BODY25_GAIT_KEYPOINTS = {
 # ------------------ Kinetics Calculations ------------------ #
 
 # ------------------ Joint Angles ------------------ #
-
 def calculate_angles(model, keypoints):
     def angle_between(p1_idx, p2_idx):
         y_diff = keypoints[:, p1_idx, 1] - keypoints[:, p2_idx, 1]
@@ -122,7 +121,7 @@ def calculate_angles(model, keypoints):
     if model == 'BODY25':
         R_Hip, R_Knee, R_Ankle, R_BigToe = 9, 10, 11, 22
         L_Hip, L_Knee, L_Ankle, L_BigToe = 12, 13, 14, 19
-    elif model == 'COCO-WholeBody':
+    elif model == 'wholeBody':
         R_Hip, R_Knee, R_Ankle, R_BigToe = 12, 14, 16, 20
         L_Hip, L_Knee, L_Ankle, L_BigToe = 11, 13, 15, 17
     else:
@@ -274,7 +273,6 @@ def calculate_gait_parameters(keypoints, time_vector, events, scaling_factor=1.0
 
     return gait_params
 # FIXME: end
-
 def calculate_spatial_parameters(model, keypoints, events, scaling_factor=1.0):
     """
     calculates spatial parameters such as step length and gait speed based on 2D keypoint positions and gait events.
@@ -307,7 +305,6 @@ def calculate_spatial_parameters(model, keypoints, events, scaling_factor=1.0):
     spatial_parameters['stepLength']['left'] = np.abs(scaling_factor * (l_pos_at_lhs - r_pos_at_lhs))
     
     return spatial_parameters
-
 
 def calculate_gait_parameters_2(keypoints, time_vector, events, scaling_factor=1.0):
 
@@ -396,4 +393,47 @@ def calculate_gait_parameters_2(keypoints, time_vector, events, scaling_factor=1
     return gait_params
 # ------------------ Temporal Parameters ------------------ #
 
+def add_step_direction(source_df, distance_data):
+    steps_df = source_df.copy()
 
+    dx_values = []
+    directions = []
+
+    for _, row in steps_df.iterrows():
+        side = row["side"]
+        start = int(row["hs_frame"])
+        end = int(row["next_same_side_hs_frame"])
+
+        if end < 0 or end <= start:
+            dx_values.append(np.nan)
+            directions.append("unknown")
+            continue
+
+        if side == "left":
+            signal = distance_data["left_ankle_distance"][:, 0]
+        elif side == "right":
+            signal = distance_data["right_ankle_distance"][:, 0]
+        else:
+            dx_values.append(np.nan)
+            directions.append("unknown")
+            continue
+
+        if end >= len(signal):
+            dx_values.append(np.nan)
+            directions.append("unknown")
+            continue
+
+        dx = signal[end] - signal[start]
+        dx_values.append(float(dx))
+
+        if dx > 0:
+            directions.append("forward")
+        elif dx < 0:
+            directions.append("backward")
+        else:
+            directions.append("stationary")
+
+    steps_df["relative_foot_dx_px"] = dx_values
+    steps_df["step_direction"] = directions
+
+    return steps_df

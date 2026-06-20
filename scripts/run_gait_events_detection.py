@@ -15,10 +15,14 @@ from datetime import datetime
 
 from src.io.keypoints_io import load_keypoints_dict_from_json
 from src.domain.gait_events_detection import ankle_to_pelvis_distance, gait_event_detection
-from src.domain.gait_feature_extraction import calculate_gait_parameters, calculate_gait_parameters_2, calculate_spatial_parameters
+from src.domain.gait_feature_extraction import (calculate_gait_parameters, 
+                                                calculate_gait_parameters_2, 
+                                                calculate_spatial_parameters, 
+                                                calculate_angles,
+                                                add_step_direction)
 from plotting.plot_gait_events_detection_timeseries import plot_ankle_to_pelvis_distance, save_figure
 from src.models.joint_model_mapping import BODY25_GAIT_KEYPOINTS, WHOLEBODY_GAIT_KEYPOINTS
-from src.io.features_io import (TEMPORAL_STEP_EVENTS_SCHEMA, VIDEO_SUMMARY_SCHEMA, SPATIAL_STEP_EVENTS_SCHEMA, SPATIAL_EVENT_COLUMNS, STEP_EVENT_COLUMNS,
+from src.io.features_io import (TEMPORAL_STEP_EVENTS_SCHEMA, VIDEO_SUMMARY_SCHEMA, SPATIAL_STEP_EVENTS_SCHEMA, SPATIAL_EVENT_COLUMNS, STEP_EVENT_COLUMNS, build_angle_step_rows,
                                 build_gait_step_rows_from_events, build_gait_step_rows_from_events_2, build_steps_rows, build_spatial_step_rows_from_events)
 from src.config import Config  
 
@@ -46,7 +50,6 @@ def parse_args():
     
     return parser.parse_args()
 
-
 def align_x_to_motion_axis(distance_data):
     """Flip x-components so progression direction is consistently positive."""
     mid_pelvis_x = distance_data["mid_pelvis_loc"][:, 0]
@@ -67,10 +70,12 @@ def align_x_to_motion_axis(distance_data):
         ):
             distance_data[key][:, 0] *= -1.0
         print("Applied x-axis flip: detected right-to-left motion.")
+        direction_sign = -1.0
     else:
         print("No x-axis flip: detected left-to-right motion.")
+        direction_sign = 1.0
 
-    return distance_data
+    return distance_data, direction_sign    
 
 DATE = datetime.now().strftime('%Y%m%d_%H%M%S')
 
@@ -98,11 +103,20 @@ output_path = os.path.join(
 #output_path = f"/home/projects/sipl-prj10496/project_files/outputs/hrnet_wholebody_output/{run_hash_id}/{video_name}_gait_events_timeseries.png"
 fps = 60.0
 
+plot_output_path = os.path.join(
+    Config.OUTPUT_DIR,
+    f"{video_name}_gait_events_timeseries_{DATE}.png",
+)
 
 keypoints_dict = load_keypoints_dict_from_json(input_path, model_type="wholebody")
 distance_data = ankle_to_pelvis_distance("wholebody", keypoints_dict)
 distance_data = align_x_to_motion_axis(distance_data)
 gait_events = gait_event_detection(distance_data, frame_indices=keypoints_dict['frame_indices'])
+angles = calculate_angles("wholeBody", keypoints_dict["keypoints"])
+
+print("Available angles:", angles.keys())
+print("Left knee angles shape:", angles["LKnee"].shape)
+print("First 10 left knee angles:", angles["LKnee"][:10])
 
 if args.plot_distance:
     fig = plot_ankle_to_pelvis_distance(
@@ -111,11 +125,15 @@ if args.plot_distance:
         frame_indices=keypoints_dict['frame_indices'],
         fps=fps,
     )
-    save_figure(fig, output_path)
+    save_figure(fig, plot_output_path)
 
 time_vector = np.array(keypoints_dict['frame_indices']) / fps
 
 gait_params = calculate_gait_parameters_2(keypoints_dict['keypoints'], time_vector, gait_events)
+
+angle_step_rows = build_angle_step_rows(angles, gait_params)
+angle_steps_df = pd.DataFrame(angle_step_rows)
+print(angle_steps_df.head())
 np.set_printoptions(precision=3, suppress=True)
 
 print("Gait Parameters:")
@@ -166,11 +184,11 @@ spatial_rows = build_spatial_step_rows_from_events(
 )
 
 print("Number of step rows:", len(step_rows))
-steps_df = pd.DataFrame(step_rows, columns=STEP_EVENT_COLUMNS)
+steps_df = pd.DataFrame(step_rows)
+steps_df = add_step_direction(steps_df, distance_data)
+steps_df = steps_df[STEP_EVENT_COLUMNS]  # Reorder columns to match schema
+
 spatial_df = pd.DataFrame(spatial_rows, columns=SPATIAL_EVENT_COLUMNS)
-#print("steps_df shape:", steps_df.shape)
-#print("steps_df columns:", steps_df.columns.tolist())
-#print(steps_df.head())
 
 steps_table = pa.Table.from_pandas(steps_df, schema=TEMPORAL_STEP_EVENTS_SCHEMA, preserve_index=False)
 spatial_table = pa.Table.from_pandas(spatial_df, schema=SPATIAL_STEP_EVENTS_SCHEMA, preserve_index=False)
@@ -187,6 +205,10 @@ pq.write_table(spatial_table, spatial_features_path)
 
 left_mask = gait_params["hs_sides"] == "left"
 right_mask = gait_params["hs_sides"] == "right"
+
+angle_steps_path = f"{features_dir}/{video_name}_angle_steps.parquet"
+angle_steps_df.to_parquet(angle_steps_path, index=False)
+print(f"Saved angle step features to {angle_steps_path}")
 
 summary_df = pd.DataFrame([{
     "video_id": video_name,

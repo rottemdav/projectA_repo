@@ -1,4 +1,5 @@
 import pyarrow as pa
+import numpy as np
 
 TEMPORAL_STEP_EVENTS_SCHEMA = pa.schema([
     ("video_id", pa.string()),
@@ -14,6 +15,10 @@ TEMPORAL_STEP_EVENTS_SCHEMA = pa.schema([
     ("step_time_s", pa.float64()),
     ("stance_time_s", pa.float64()),
     ("swing_time_s", pa.float64()),
+
+    ("relative_foot_dx_px", pa.float64()),
+    ("step_direction", pa.string()),
+
 
     ("valid", pa.bool_()),
 ])
@@ -65,6 +70,8 @@ STEP_EVENT_COLUMNS = [
     "step_time_s",
     "stance_time_s",
     "swing_time_s",
+    "relative_foot_dx_px",
+    "step_direction",
     "valid",
 ]
 
@@ -294,5 +301,72 @@ def build_spatial_step_rows_from_events(video_name, run_hash_id, gait_params, sp
             "next_same_side_hs_frame": int(gait_params["next_same_side_hs_frames"][i]),
             "step_length_px": float(step_length_px) if step_length_px is not None else float("nan"),
         })
+
+    return rows
+
+def build_angle_step_rows(angles, gait_params):
+    rows = []
+
+    for i, hs_frame in enumerate(gait_params["hs_frames"]):
+        side = gait_params["hs_sides"][i]
+        next_same_hs = gait_params["next_same_side_hs_frames"][i]
+        toe_off = gait_params["to_frames"][i]
+
+        if next_same_hs < 0:
+            continue
+
+        if side == "left":
+            hip_key = "LHip"
+            knee_key = "LKnee"
+            ankle_key = "LAnkle"
+        else:
+            hip_key = "RHip"
+            knee_key = "RKnee"
+            ankle_key = "RAnkle"
+
+        start = int(hs_frame)
+        end = int(next_same_hs)
+
+        hip_cycle = angles[hip_key][start:end + 1]
+        knee_cycle = angles[knee_key][start:end + 1]
+        ankle_cycle = angles[ankle_key][start:end + 1]
+
+        row = {
+            "global_step_index": int(i),
+            "side": str(side),
+            "hs_frame": int(hs_frame),
+            "to_frame": int(toe_off),
+            "next_same_side_hs_frame": int(next_same_hs),
+
+            "hip_angle_at_hs_deg": float(angles[hip_key][start]),
+            "knee_angle_at_hs_deg": float(angles[knee_key][start]),
+            "ankle_angle_at_hs_deg": float(angles[ankle_key][start]),
+
+            "hip_rom_deg": float(np.nanmax(hip_cycle) - np.nanmin(hip_cycle)),
+            "knee_rom_deg": float(np.nanmax(knee_cycle) - np.nanmin(knee_cycle)),
+            "ankle_rom_deg": float(np.nanmax(ankle_cycle) - np.nanmin(ankle_cycle)),
+
+            "hip_min_deg": float(np.nanmin(hip_cycle)),
+            "hip_max_deg": float(np.nanmax(hip_cycle)),
+            "knee_min_deg": float(np.nanmin(knee_cycle)),
+            "knee_max_deg": float(np.nanmax(knee_cycle)),
+            "ankle_min_deg": float(np.nanmin(ankle_cycle)),
+            "ankle_max_deg": float(np.nanmax(ankle_cycle)),
+        }
+
+        if toe_off >= 0:
+            row.update({
+                "hip_angle_at_to_deg": float(angles[hip_key][toe_off]),
+                "knee_angle_at_to_deg": float(angles[knee_key][toe_off]),
+                "ankle_angle_at_to_deg": float(angles[ankle_key][toe_off]),
+            })
+        else:
+            row.update({
+                "hip_angle_at_to_deg": np.nan,
+                "knee_angle_at_to_deg": np.nan,
+                "ankle_angle_at_to_deg": np.nan,
+            })
+
+        rows.append(row)
 
     return rows

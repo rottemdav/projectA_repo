@@ -59,18 +59,32 @@ def gait_event_detection(gait_distance_data, frame_indices) -> Dict[str, np.ndar
     - rto: (M,) array of frame indices where right toe offs are detected.
     - toe_offs: (M,) array of frame indices where toe offs are detected.
     """
-    left_ankle_to_pelvis = gait_distance_data["left_ankle_distance"][:, 0]  # (N,)
-    right_ankle_to_pelvis = gait_distance_data["right_ankle_distance"][:, 0]  # (N,)
+    def _fill_nan_1d(x):
+        x = np.asarray(x, dtype=float).copy()
+        valid = np.isfinite(x)
+
+        if not np.any(valid):
+            return x
+
+        if np.all(valid):
+            return x
+
+        idx = np.arange(len(x))
+        x[~valid] = np.interp(idx[~valid], idx[valid], x[valid])
+        return x
+    
+    left_ankle_to_pelvis = _fill_nan_1d(gait_distance_data["left_ankle_distance"][:, 0])
+    right_ankle_to_pelvis = _fill_nan_1d(gait_distance_data["right_ankle_distance"][:, 0])
 
     # tuning constant to ignore false positives
-    left_prominence = 0.1 * (np.max(left_ankle_to_pelvis) - np.min(left_ankle_to_pelvis))
-    right_prominence = 0.1 * (np.max(right_ankle_to_pelvis) - np.min(right_ankle_to_pelvis))
+    left_prominence = 0.1 * (np.nanmax(left_ankle_to_pelvis) - np.nanmin(left_ankle_to_pelvis))
+    right_prominence = 0.1 * (np.nanmax(right_ankle_to_pelvis) - np.nanmin(right_ankle_to_pelvis))
 
-    lhs_idx, _ = find_peaks(left_ankle_to_pelvis, prominence=left_prominence, height=0.0)
-    lto_idx, _ = find_peaks(-left_ankle_to_pelvis, prominence=left_prominence, height=0.0)
+    lhs_idx, _ = find_peaks(left_ankle_to_pelvis, prominence=left_prominence)
+    lto_idx, _ = find_peaks(-left_ankle_to_pelvis, prominence=left_prominence)
 
-    rhs_idx, _ = find_peaks(right_ankle_to_pelvis, prominence=right_prominence, height=0.0)
-    rto_idx, _ = find_peaks(-right_ankle_to_pelvis, prominence=right_prominence, height=0.0)
+    rhs_idx, _ = find_peaks(right_ankle_to_pelvis, prominence=right_prominence)
+    rto_idx, _ = find_peaks(-right_ankle_to_pelvis, prominence=right_prominence)
 
     return {
         "lhs": lhs_idx,
