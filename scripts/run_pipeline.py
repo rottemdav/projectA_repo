@@ -80,7 +80,7 @@ def main():
             hrnet_pose_estimation, keypoint_post_process, create_filtered_video
     )
     elif args.model == "openpose":
-        from src.models.openPose_video_process import openpose_pose_estimation 
+        from src.models.openPose_video_process import openpose_pose_estimation, keypoint_post_process 
 
 # ============ Process Video ============
 
@@ -131,20 +131,41 @@ def main():
         print("\n" + "="*60)
         print("\n")
         print("the process will save the keypoints extracted by OpenPose to a json file to the path: ", output_path)
-        kp_filtered, kp_unfiltered = openpose_pose_estimation(Config.INPUT_PATH, Config.START_FRAME, Config.END_FRAME)
-        op_keypoints_arr = kp_filtered
+        if args.skip_processing:
+            print("Skipping video processing step. Loading keypoints from existing json output...")
+            if args.existing_json:
+                json_path = args.existing_json
+            else:
+                print("Error: --existing_json must be provided when --skip_processing is set.")
+                return
+
+            loaded = load_keypoints_dict_from_json(json_path, model_type="body25")
+            op_keypoints_arr = loaded["keypoints"]
+            frame_indices = loaded["frame_indices"]
+            has_person = loaded["has_person"]
+
+            # Mirror HRNet skip behavior by re-running temporal post-processing.
+            _, op_keypoints_arr = keypoint_post_process(op_keypoints_arr, Config.VIDEO_NAME, Config.FRAME_RANGE)
+        else:
+            kp_filtered, kp_unfiltered = openpose_pose_estimation(Config.INPUT_PATH, Config.START_FRAME, Config.END_FRAME)
+            op_keypoints_arr = kp_filtered
+            start = Config.START_FRAME or 0
+            frame_indices = list(range(start, start + len(op_keypoints_arr)))
+            has_person = [True] * len(op_keypoints_arr)
+
+        if op_keypoints_arr is None:
+            return
+
 
         save_keypoints_dict_to_json(
             {
-                "frame_indices": list(range(Config.START_FRAME, Config.END_FRAME + 1)),
+                "frame_indices": frame_indices,
                 "keypoints": op_keypoints_arr,
-                "has_person": [True] * len(op_keypoints_arr),  # OpenPose always returns keypoints for each frame, so we can assume a person is detected in all frames
+                "has_person": has_person,
             },
             output_path,
             model_type="openpose"
         )
-        if op_keypoints_arr is None:
-            return
     
     print("\n" + "="*60)
     print("WholeBody Pose Processor initialized successfully!")

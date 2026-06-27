@@ -74,13 +74,18 @@ def is_skeleton_valid(keypoints, model_type="openpose", prev_hip_pos=None, min_c
                 return False
 
         # 2. Leg completeness
-        required_leg_points = [idx.R_HIP, idx.R_KNEE, idx.R_ANKLE, idx.L_HIP, idx.L_KNEE, idx.L_ANKLE]
-        confident_leg_points = sum(1 for i in required_leg_points if has_conf(i))
+        # Relaxed: only require Hip + Knee on at least one side. The Ankle
+        # is frequently low-confidence or cut off entirely while a subject
+        # is still entering the frame (e.g. the start of a window), so
+        # requiring a fully-confident Hip+Knee+Ankle chain here was
+        # rejecting otherwise-valid partial skeletons exactly when tracking
+        # needs to lock on. Ankle data, when present, is still used by the
+        # leg-length proportion check below - it just no longer gates
+        # validity on its own.
+        right_leg_complete = has_conf(idx.R_HIP) and has_conf(idx.R_KNEE)
+        left_leg_complete = has_conf(idx.L_HIP) and has_conf(idx.L_KNEE)
 
-        right_leg_complete = has_conf(idx.R_HIP) and has_conf(idx.R_KNEE) and has_conf(idx.R_ANKLE)
-        left_leg_complete = has_conf(idx.L_HIP) and has_conf(idx.L_KNEE) and has_conf(idx.L_ANKLE)
-        
-        if confident_leg_points < 4 or not (right_leg_complete or left_leg_complete):
+        if not (right_leg_complete or left_leg_complete):
             return False
 
         # 3. Torso Reference Length
@@ -133,13 +138,13 @@ def is_skeleton_valid(keypoints, model_type="openpose", prev_hip_pos=None, min_c
         virtual_mid_hip = (mid_hip_x, mid_hip_y, min(keypoints[idx.L_HIP][2], keypoints[idx.R_HIP][2]))
 
         # 2. Leg completeness
-        required_leg_points = [idx.R_HIP, idx.R_KNEE, idx.R_ANKLE, idx.L_HIP, idx.L_KNEE, idx.L_ANKLE]
-        confident_leg_points = sum(1 for i in required_leg_points if has_conf(i))
+        # Relaxed: only require Hip + Knee on at least one side (see the
+        # matching comment in the "openpose" branch above for why the
+        # Ankle is no longer a hard requirement here).
+        right_leg_complete = has_conf(idx.R_HIP) and has_conf(idx.R_KNEE)
+        left_leg_complete = has_conf(idx.L_HIP) and has_conf(idx.L_KNEE)
 
-        right_leg_complete = has_conf(idx.R_HIP) and has_conf(idx.R_KNEE) and has_conf(idx.R_ANKLE)
-        left_leg_complete = has_conf(idx.L_HIP) and has_conf(idx.L_KNEE) and has_conf(idx.L_ANKLE)
-        
-        if confident_leg_points < 4 or not (right_leg_complete or left_leg_complete):
+        if not (right_leg_complete or left_leg_complete):
             return False
 
         # 3. Torso Reference Length (Requires virtual neck from shoulders)
@@ -179,6 +184,8 @@ def is_skeleton_valid(keypoints, model_type="openpose", prev_hip_pos=None, min_c
             max_allowed_jump = torso_len * 0.5  
             if velocity > max_allowed_jump:
                 return False
+            
+        return True
 
 def is_in_roi(keypoints, cam_num, model_type="openpose"):
     """
@@ -198,7 +205,10 @@ def is_in_roi(keypoints, cam_num, model_type="openpose"):
         return False
         
     if cam_num == 1:
-        return mid_hip_y < 930
+        # 90px buffer above the original 960 cutoff: the subject's natural
+        # sway oscillates in the 960-1019 range, which caused the ROI check
+        # to flicker ACCEPTED/REJECTED frame-to-frame right at the boundary.
+        return mid_hip_y < 1100
     elif cam_num == 2:
         return 1860 <= mid_hip_x <= 2380
     elif cam_num == 3:
@@ -214,6 +224,7 @@ def filter_and_track_person(all_keypoints, last_known_hip_x, cam_num, model_type
     """
     best_person_idx = -1
     min_distance = float('inf')
+    best_init_conf = -1.0  # highest hip confidence seen so far while initializing (no prior position yet)
 
     for i, keypoints in enumerate(all_keypoints):
     #    if i == 0:
@@ -248,8 +259,18 @@ def filter_and_track_person(all_keypoints, last_known_hip_x, cam_num, model_type
             mid_hip_x = (keypoints[HRNetIndices.L_HIP][0] + keypoints[HRNetIndices.R_HIP][0]) / 2.0
             
         if last_known_hip_x is None:
-            # First valid person initializes the tracker
-            return i
+            # Tracker initialization trap fix: do NOT lock onto the first
+            # valid candidate found - if a background person happens to be
+            # evaluated before the actual patient, the tracker would hijack
+            # onto them, and the real subject would then get rejected by
+            # the distance < 350 check for the rest of the window. Instead,
+            # scan every valid candidate in this frame and keep the one
+            # with the highest hip confidence - the strongest available
+            # signal for "primary subject" when there is no previous
+            # position yet to compare against.
+            if hip_conf > best_init_conf:
+                best_init_conf = hip_conf
+                best_person_idx = i
         else:
             distance = abs(mid_hip_x - last_known_hip_x)
             if distance < min_distance and distance < 350:

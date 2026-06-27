@@ -14,6 +14,10 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from libs.hrnet_classes import Config, WholeBodyPoseProcessor, KeypointPostProcessor, HAS_MMDET      
+from src.domain.person_tracking import (
+    select_tracked_person_frames,
+    tracked_frames_to_keypoints_array,
+)
 from src.io.keypoints_io import save_keypoints_dict_to_json
 
 def _create_processor():
@@ -85,10 +89,20 @@ def hrnet_pose_estimation(input, start_frame, end_frame):
     print("============================\n")
 
 # ===== Results Formatting =====
-    keypoints_arr = processor.keypoints_to_array(all_frames)
+    tracked_frames = select_tracked_person_frames(
+        all_frames,
+        model_type="hrnet",
+        video_name=video_name,
+        min_conf=0.3,
+    )
+    keypoints_arr = tracked_frames_to_keypoints_array(
+        tracked_frames,
+        model_type="hrnet",
+        num_keypoints=133,
+    )
 
-    frame_indices = [f["frame_index"] for f in all_frames]  # or whatever the frame index key is
-    has_person = [len(f["persons"]) > 0 for f in all_frames]
+    frame_indices = [f["frame_index"] for f in tracked_frames]  # or whatever the frame index key is
+    has_person = [len(f["persons"]) > 0 for f in tracked_frames]
 
     # Extract and print keypoints for the first frame with detections
     if all_results:
@@ -98,7 +112,7 @@ def hrnet_pose_estimation(input, start_frame, end_frame):
         for i, kp_data in enumerate(keypoints):
             print(f"  Person {i}: {kp_data['keypoints'].shape[0]} keypoints")
 
-    return keypoints_arr, all_frames, frame_indices, has_person, processor    
+    return keypoints_arr, tracked_frames, frame_indices, has_person, processor    
 
 def keypoint_post_process(keypoints_arr,video_name, out_range):
     post_processor = _create_post_processor()

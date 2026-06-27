@@ -5,6 +5,7 @@ import numpy as np
 import argparse
 import pyarrow as pa
 import pyarrow.parquet as pq
+import copy
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
@@ -19,6 +20,7 @@ from src.domain.gait_feature_extraction import (calculate_gait_parameters,
                                                 calculate_gait_parameters_2, 
                                                 calculate_spatial_parameters, 
                                                 calculate_angles,
+                                                calculate_sagittal_2d_angles,
                                                 add_step_direction)
 from plotting.plot_gait_events_detection_timeseries import plot_ankle_to_pelvis_distance, save_figure
 from src.models.joint_model_mapping import BODY25_GAIT_KEYPOINTS, WHOLEBODY_GAIT_KEYPOINTS
@@ -50,7 +52,7 @@ def parse_args():
     parser.add_argument("--heel_strike_extrema",
                         type=str,
                         choices=["min", "max"],
-                        default="min",
+                        default="max",
                         help="Which ankle-to-pelvis signal extremum should be tagged as heel strike. Use 'min' for the current treadmill direction convention, or 'max' if visual validation shows the labels are reversed.")
     
     return parser.parse_args()
@@ -91,6 +93,23 @@ DATE = datetime.now().strftime('%Y%m%d_%H%M%S')
 args = parse_args()
 
 input_path = args.input_path if args.input_path else "/home/projects/sipl-prj10496/project_files/data/hrnet_wholebody_output/20260404_174122/HC65_3_keypoints_filtered_20260404_174122_3000_to_5000.json"
+# Map CLI model to the exact model strings expected by downstream functions.
+if args.model == "hrnet":
+    keypoints_model_type = "wholebody"
+    gait_model = "wholebody"
+    angle_model = "wholeBody"
+    sagittal_angle_model = "wholebody"
+    spatial_model = "COCO-WholeBody"
+    
+elif args.model == "openpose":
+    keypoints_model_type = "body25"
+    gait_model = "body25"
+    angle_model = "BODY25"
+    sagittal_angle_model = "openpose"
+    spatial_model = "BODY25"
+else:
+    raise ValueError(f"Unsupported model: {args.model}")
+
 # extract the last part of the filename without extension for output naming
 video_name = Path(input_path).stem.split("_keypoints")[0]
 # extract the running hash id from the parent folder (e.g. 20260404_152056)
@@ -117,31 +136,38 @@ plot_output_path = os.path.join(
     f"{video_name}_gait_events_timeseries_{DATE}.png",
 )
 
-keypoints_dict = load_keypoints_dict_from_json(input_path, model_type="wholebody")
-distance_data = ankle_to_pelvis_distance("wholebody", keypoints_dict)
+keypoints_dict = load_keypoints_dict_from_json(input_path, model_type=keypoints_model_type)
+raw_distance_data = ankle_to_pelvis_distance(gait_model, keypoints_dict)
 
-forward_axis_sign = infer_forward_axis_sign("wholebody", keypoints_dict)
+forward_axis_sign = infer_forward_axis_sign(gait_model, keypoints_dict)
+
+angles = calculate_sagittal_2d_angles(
+    sagittal_angle_model,
+    keypoints_dict["keypoints"],
+    forward_axis_sign=forward_axis_sign,
+)
 print("forward_axis_sign:", forward_axis_sign)
 
-distance_data = align_x_to_motion_axis(
-    distance_data,
+aligned_distance_data = align_x_to_motion_axis(
+    copy.deepcopy(raw_distance_data),
     forward_axis_sign=forward_axis_sign,
 )
 
 gait_events = gait_event_detection(
-    distance_data,
+    aligned_distance_data,
     frame_indices=keypoints_dict["frame_indices"],
-    step_direction="forward",
+    heel_strike_extrema=args.heel_strike_extrema,
 )
-angles = calculate_angles("wholeBody", keypoints_dict["keypoints"])
 
-print("Available angles:", angles.keys())
-print("Left knee angles shape:", angles["LKnee"].shape)
-print("First 10 left knee angles:", angles["LKnee"][:10])
+angles = calculate_angles(angle_model, keypoints_dict["keypoints"])
+
+#print("Available angles:", angles.keys())
+#print("Left knee angles shape:", angles["LKnee"].shape)
+#print("First 10 left knee angles:", angles["LKnee"][:10])
 
 if args.plot_distance:
     fig = plot_ankle_to_pelvis_distance(
-        distance_data,
+        aligned_distance_data,
         gait_events,
         frame_indices=keypoints_dict['frame_indices'],
         fps=fps,
@@ -154,32 +180,33 @@ gait_params = calculate_gait_parameters_2(keypoints_dict['keypoints'], time_vect
 
 angle_step_rows = build_angle_step_rows(angles, gait_params)
 angle_steps_df = pd.DataFrame(angle_step_rows)
-print(angle_steps_df.head())
+
+#print(angle_steps_df.head())
 np.set_printoptions(precision=3, suppress=True)
 
-print("Gait Parameters:")
-for param_name, param_value in gait_params.items():
-    if isinstance(param_value, dict):
-        print(f"{param_name}:")
-        for side, values in param_value.items():
-            print(f"  {side}: {values}")
-        print()
-    elif isinstance(param_value, np.ndarray):
-        print(f"{param_name}: {param_value}")  # or print summary stats
-    else:
-        print(f"{param_name}: {param_value:.3f}\n")
+#print("Gait Parameters:")
+#for param_name, param_value in gait_params.items():
+#    if isinstance(param_value, dict):
+#        print(f"{param_name}:")
+#        for side, values in param_value.items():
+#            print(f"  {side}: {values}")
+#        print()
+#    elif isinstance(param_value, np.ndarray):
+#        print(f"{param_name}: {param_value}")  # or print summary stats
+#    else:
+#        print(f"{param_name}: {param_value:.3f}\n")
 
-spatial_params = calculate_spatial_parameters("COCO-WholeBody", keypoints_dict['keypoints'], gait_events)
+spatial_params = calculate_spatial_parameters(spatial_model, keypoints_dict['keypoints'], gait_events)
 
-print("Spatial Parameters:")
-for param_name, param_value in spatial_params.items():
-    if isinstance(param_value, dict):
-        print(f"{param_name}:")
-        for side, values in param_value.items():
-            print(f"  {side}: {values}")
-        print() # Adds a blank line for readability
-    else:
-        print(f"{param_name}: {param_value:.3f}\n")
+#print("Spatial Parameters:")
+#for param_name, param_value in spatial_params.items():
+#    if isinstance(param_value, dict):
+#        print(f"{param_name}:")
+#        for side, values in param_value.items():
+#           print(f"  {side}: {values}")
+#        print() # Adds a blank line for readability
+#    else:
+#        print(f"{param_name}: {param_value:.3f}\n")
 
 ## build rows for steps, double support, and video summary tables
 
@@ -206,8 +233,10 @@ spatial_rows = build_spatial_step_rows_from_events(
 
 print("Number of step rows:", len(step_rows))
 steps_df = pd.DataFrame(step_rows)
-steps_df = add_step_direction(steps_df, distance_data)
+steps_df = add_step_direction(steps_df, raw_distance_data, forward_axis_sign)
 steps_df = steps_df[STEP_EVENT_COLUMNS]  # Reorder columns to match schema
+#print("steps_df:")
+#print(steps_df)
 
 spatial_df = pd.DataFrame(spatial_rows, columns=SPATIAL_EVENT_COLUMNS)
 

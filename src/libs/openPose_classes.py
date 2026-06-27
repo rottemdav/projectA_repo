@@ -8,7 +8,7 @@ from typing import Optional, List, Tuple
 from datetime import datetime
 from scipy.signal import filtfilt, butter
 
-from utils.skeleton_tracking import filter_and_track_person
+from src.utils.skeleton_tracking import filter_and_track_person
 from src.config import Config
 
 
@@ -60,6 +60,8 @@ class OpenPoseProcessor:
         
         # poseKeypoints is of shape (N, 25, 3)
         pose_results = datum.poseKeypoints
+        # Return both the raw pose results and the Datum object so callers
+        # can inspect visualized output (cvOutputData) if needed.
         return pose_results, datum
 
     def extract_keypoints(self, pose_results) -> List[dict]:
@@ -352,6 +354,18 @@ class OpenPoseProcessor:
         for f, kp in zip(all_frames, filtered_keypoints):
             frame_to_kp[f['frame_index']] = kp
 
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        if start_frame is None:
+            start_frame = 0
+        if end_frame is None:
+            if all_frames:
+                end_frame=max(f["frame_index"] for f in all_frames)
+            else :
+                end_frame=total_frames - 1
+        else:
+            end_frame = min(end_frame, total_frames - 1)
+
         frame_idx = start_frame
         frames_written = 0
         print(f"[Visualization] Starting to write filtered video from frame {start_frame} to {end_frame}...")
@@ -396,9 +410,12 @@ class KeypointPostProcessor:
         for k in range(num_keypoints):
             # Get confidence scores for this keypoint across all frames
             conf_series = keypoints[:, k, 2]
-            mask = conf_series < self.conf_threshold  # True where confidence is low
+            # Treat NaN confidence as missing too, otherwise those frames stay unfilled.
+            mask = (~np.isfinite(conf_series)) | (conf_series < self.conf_threshold)  # True where confidence is low or missing
             
-            if np.sum(~mask) < 2:
+            valid_mask = (~mask) & np.isfinite(keypoints[:, k, 0]) & np.isfinite(keypoints[:, k, 1])
+
+            if np.sum(valid_mask) < 2:
                 continue  # Not enough points to interpolate
             
             # Interpolate x and y coordinates
@@ -406,9 +423,13 @@ class KeypointPostProcessor:
                 coord_series = keypoints_filled[:, k, d]
                 coord_series[mask] = np.interp(
                     np.where(mask)[0],
-                    np.where(~mask)[0],
-                    coord_series[~mask]
+                    np.where(valid_mask)[0],
+                    coord_series[valid_mask]
                 )
+
+            # Keep missing-frame confidence at zero so temporal filtering does not
+            # propagate NaNs through the score channel.
+            keypoints_filled[mask, k, 2] = 0.0
         
         return keypoints_filled
 

@@ -12,7 +12,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from libs.openPose_classes import Config, OpenPoseProcessor, KeypointPostProcessor
-from utils.skeleton_tracking import filter_and_track_person
+from utils.skeleton_tracking import filter_and_track_person, is_in_roi, is_skeleton_valid
 import utils.skeleton_tracking as st; print("skeleton_tracking:", st.__file__)
 
 def openpose_pose_estimation(input, start_frame, end_frame):
@@ -57,14 +57,18 @@ def openpose_pose_estimation(input, start_frame, end_frame):
     # We apply target tracking across all detected people to extract the main subject.
     # This acts as our "shield" against the Frankenstein effect: isolating one person
     # geometrically BEFORE temporal interpolation connects multiple subjects.
+    # Naming convention: name_camNum_videoNum - camera is the SECOND
+    # underscore-separated token, not the last one (see src/video_process.py).
     try:
-        cam_num = int(video_name.split('_')[-1])
-    except ValueError:
+        cam_num = int(video_name.split('_')[1])
+    except (IndexError, ValueError):
         cam_num = 1
         
     num_frames = len(all_frames)
     num_keypoints = 25 # BODY_25
-    keypoints_arr = np.zeros((num_frames, num_keypoints, 3), dtype=np.float32)
+    # Keep missing frames as NaN in x/y so downstream interpolation does not
+    # mistake the top-left corner for a real body location.
+    keypoints_arr = np.full((num_frames, num_keypoints, 3), np.nan, dtype=np.float32)
     last_known_hip_x = None
 
     for t, frame in enumerate(all_frames):
@@ -72,8 +76,44 @@ def openpose_pose_estimation(input, start_frame, end_frame):
         if not persons:
             continue
             
-        all_kps_for_tracker = [p['keypoints'] for p in persons]
-        
+        # Build a list of (K,3) arrays per person: [x,y,conf]
+        all_kps_for_tracker = []
+        for p in persons:
+            coords = np.array(p.get('keypoints', []), dtype=np.float32)
+            scores = np.array(p.get('scores', []), dtype=np.float32)
+
+            # If coords are (K,2) and scores are (K,), combine to (K,3)
+            if coords.ndim == 2 and scores.ndim == 1 and coords.shape[0] == scores.shape[0]:
+                combined = np.concatenate([coords, scores.reshape(-1, 1)], axis=1)
+            else:
+                # Fallback: create combined array with NaNs and fill available values
+                n = 0
+                if coords.ndim == 2:
+                    n = coords.shape[0]
+                if scores.ndim == 1:
+                    n = max(n, scores.shape[0])
+                combined = np.full((n, 3), np.nan, dtype=np.float32)
+                if coords.ndim == 2:
+                    combined[:coords.shape[0], :2] = coords
+                if scores.ndim == 1:
+                    combined[:scores.shape[0], 2] = scores
+
+            all_kps_for_tracker.append(combined.tolist())
+
+        for i, p in enumerate(persons):
+            # use the combined representation for validity checks
+            combined = np.array(all_kps_for_tracker[i], dtype=np.float32)
+            hip_conf = float(combined[8, 2]) if combined.size and combined.shape[0] > 8 else None
+            try:
+                roi_ok = is_in_roi(combined, cam_num, model_type='openpose') if cam_num is not None else True
+            except Exception as e:
+                roi_ok = f"error:{e}"
+            try:
+                valid_ok = is_skeleton_valid(combined, model_type='openpose', prev_hip_pos=last_known_hip_x, min_conf=0.3)
+            except Exception as e:
+                valid_ok = f"error:{e}"
+            # Keep the per-person inspection only in code (no print) for now; tests use logs elsewhere
+
         best_idx = filter_and_track_person(
             all_keypoints=all_kps_for_tracker,
             last_known_hip_x=last_known_hip_x,
@@ -82,6 +122,7 @@ def openpose_pose_estimation(input, start_frame, end_frame):
             use_roi_filter=True,
             min_conf=0.3
         )
+        # best_idx is used downstream; avoid noisy per-frame prints in normal runs
         
         if best_idx != -1:
             best_person = persons[best_idx]
@@ -94,6 +135,10 @@ def openpose_pose_estimation(input, start_frame, end_frame):
                 keypoints_arr[t, :, :2] = kp
             keypoints_arr[t, :, 2] = sc
             last_known_hip_x = kp[8][0] # MidHip X
+        else:
+            # Preserve a missing frame explicitly: NaN coordinates with zero confidence.
+            keypoints_arr[t, :, :2] = np.nan
+            keypoints_arr[t, :, 2] = 0.0
 
     # ===== Post Processing =====
     # Run post processing (Interpolation and Butterworth)

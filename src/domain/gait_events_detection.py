@@ -108,7 +108,7 @@ def infer_forward_axis_sign(model, keypoints_dict, confidence_threshold=0.2):
 
     return 1.0 if median_dx > 0 else -1.0
 
-def gait_event_detection(gait_distance_data, frame_indices, step_direction="forward") -> Dict[str, np.ndarray]:
+def gait_event_detection(gait_distance_data, frame_indices, heel_strike_extrema="max") -> Dict[str, np.ndarray]:
 
     def _fill_nan_1d(x):
         x = np.asarray(x, dtype=float).copy()
@@ -124,63 +124,29 @@ def gait_event_detection(gait_distance_data, frame_indices, step_direction="forw
         x[~valid] = np.interp(idx[~valid], idx[valid], x[valid])
         return x
 
-    def _detect_directional_events(signal, prominence, keep_direction="forward"):
-        maxima, _ = find_peaks(signal, prominence=prominence)
-        minima, _ = find_peaks(-signal, prominence=prominence)
+    def _detect_hs_to(signal):
+        prominence = 0.1 * (np.nanmax(signal) - np.nanmin(signal))
 
-        extrema = sorted(
-            [(idx, "max") for idx in maxima] +
-            [(idx, "min") for idx in minima],
-            key=lambda x: x[0],
-        )
+        if heel_strike_extrema == "max":
+            hs_idx, _ = find_peaks(signal, prominence=prominence)
+            to_idx, _ = find_peaks(-signal, prominence=prominence)
+        elif heel_strike_extrema == "min":
+            hs_idx, _ = find_peaks(-signal, prominence=prominence)
+            to_idx, _ = find_peaks(signal, prominence=prominence)
+        else:
+            raise ValueError("heel_strike_extrema must be 'max' or 'min'")
 
-        hs = []
-        to = []
-        directions = []
-
-        for (i0, type0), (i1, type1) in zip(extrema, extrema[1:]):
-            if type0 == type1:
-                continue
-
-            dx = signal[i1] - signal[i0]
-            direction = "forward" if dx > 0 else "backward"
-
-            if keep_direction != "both" and direction != keep_direction:
-                continue
-
-            hs.append(i0)
-            to.append(i1)
-            directions.append(direction)
-
-        return (
-            np.asarray(hs, dtype=int),
-            np.asarray(to, dtype=int),
-            np.asarray(directions, dtype=object),
-        )
+        return hs_idx.astype(int), to_idx.astype(int)
 
     left_signal = _fill_nan_1d(gait_distance_data["left_ankle_distance"][:, 0])
     right_signal = _fill_nan_1d(gait_distance_data["right_ankle_distance"][:, 0])
 
-    left_prominence = 0.1 * (np.nanmax(left_signal) - np.nanmin(left_signal))
-    right_prominence = 0.1 * (np.nanmax(right_signal) - np.nanmin(right_signal))
-
-    lhs_idx, lto_idx, left_dirs = _detect_directional_events(
-        left_signal,
-        left_prominence,
-        step_direction
-    )
-
-    rhs_idx, rto_idx, right_dirs  = _detect_directional_events(
-        right_signal,
-        right_prominence,
-        step_direction
-    )
+    lhs_idx, lto_idx = _detect_hs_to(left_signal)
+    rhs_idx, rto_idx = _detect_hs_to(right_signal)
 
     return {
         "lhs": lhs_idx,
         "lto": lto_idx,
         "rhs": rhs_idx,
         "rto": rto_idx,
-        "left_step_direction": left_dirs,
-        "right_step_direction": right_dirs,
     }

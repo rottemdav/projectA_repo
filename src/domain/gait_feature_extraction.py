@@ -26,7 +26,7 @@ COCO-WholeBody outputs 133 keypoints:
     - Body: 17 keypoints (indices 0-16)
     - Feet: 6 keypoints (indices 17-22) 
 """
-
+    
 WHOLEBODY_KEYPOINTS = {
     # --- Body (0–16) ---
     0:  "nose", 1:  "left_eye", 2:  "right_eye", 3:  "left_ear",
@@ -142,6 +142,62 @@ def calculate_angles(model, keypoints):
     angles['RAnkle'] = - (term1_R - term2_R - 90)
 
     return angles
+
+def calculate_sagittal_2d_angles(model, keypoints, forward_axis_sign=1.0):
+    model_key = model.lower().replace("-", "").replace("_", "")
+
+    if model_key in ("wholebody", "cocowholebody", "hrnet"):
+        idx = WHOLEBODY_GAIT_KEYPOINTS
+    elif model_key in ("body25", "openpose"):
+        idx = BODY25_GAIT_KEYPOINTS
+    else:
+        raise ValueError(f"Unsupported model: {model}")
+
+    kp = np.asarray(keypoints, dtype=float).copy()
+
+    if forward_axis_sign < 0:
+        kp[:, :, 0] *= -1.0
+
+    def p(side, joint):
+        return kp[:, idx[side][joint], :2]
+
+    def joint_angle(a, b, c):
+        ba = a - b
+        bc = c - b
+
+        dot = np.sum(ba * bc, axis=1)
+        denom = np.linalg.norm(ba, axis=1) * np.linalg.norm(bc, axis=1)
+
+        cosang = np.divide(
+            dot,
+            denom,
+            out=np.full(dot.shape, np.nan, dtype=float),
+            where=denom > 0,
+        )
+
+        return np.degrees(np.arccos(np.clip(cosang, -1.0, 1.0)))
+
+    def signed_thigh_angle(hip, knee):
+        thigh = knee - hip
+
+        vertical_down = np.zeros_like(thigh)
+        vertical_down[:, 1] = 1.0
+
+        dot = np.sum(vertical_down * thigh, axis=1)
+        det = vertical_down[:, 0] * thigh[:, 1] - vertical_down[:, 1] * thigh[:, 0]
+
+        return np.degrees(np.arctan2(det, dot))
+
+    return {
+        "LHip": signed_thigh_angle(p("left", "hip"), p("left", "knee")),
+        "RHip": signed_thigh_angle(p("right", "hip"), p("right", "knee")),
+
+        "LKnee": joint_angle(p("left", "hip"), p("left", "knee"), p("left", "ankle")),
+        "RKnee": joint_angle(p("right", "hip"), p("right", "knee"), p("right", "ankle")),
+
+        "LAnkle": joint_angle(p("left", "knee"), p("left", "ankle"), p("left", "toe")),
+        "RAnkle": joint_angle(p("right", "knee"), p("right", "ankle"), p("right", "toe")),
+    }
 
 # FIXME: old version - delete
 def calculate_gait_parameters(keypoints, time_vector, events, scaling_factor=1.0):
@@ -308,6 +364,23 @@ def calculate_spatial_parameters(model, keypoints, events, scaling_factor=1.0):
 
 def calculate_gait_parameters_2(keypoints, time_vector, events, scaling_factor=1.0):
 
+    def next_event_index(frames, f):
+        future_events = frames[frames > f]
+        return int(future_events[0]) if len(future_events) else None
+
+    def toe_off_before_current_hs(frames, prev_f, curr_f, max_frames_before=90):
+        in_step = frames[(frames > prev_f) & (frames < curr_f)]
+        if len(in_step):
+            return int(in_step[-1])
+
+        before_current = frames[frames < curr_f]
+        if len(before_current):
+            candidate = int(before_current[-1])
+            if curr_f - candidate <= max_frames_before:
+                return candidate
+
+        return None
+
     #build chronological heel-strike timeline
     hs_events = []
 
@@ -319,10 +392,6 @@ def calculate_gait_parameters_2(keypoints, time_vector, events, scaling_factor=1
     hs_events = sorted(hs_events, key=lambda x: x[0]) # sort by frame index
 
     #helper to get next event index in a sorted array
-
-    def next_event_index(frames, f):
-        future_events = frames[frames > f]
-        return int(future_events[0]) if len(future_events) else None
     
     lhs = np.array(sorted(events['lhs']), dtype = int)
     rhs = np.array(sorted(events['rhs']), dtype = int)
@@ -346,38 +415,40 @@ def calculate_gait_parameters_2(keypoints, time_vector, events, scaling_factor=1
         # treat a step only if the current side and the next side alternates sides (i.e. left -> right or right -> left)
         if prev_side == curr_side:
             continue
+        
+        if curr_side == "left":
+            to_f = toe_off_before_current_hs(lto, prev_f, curr_f)
+            next_same_hs = next_event_index(lhs, curr_f)
+        else:
+            to_f = toe_off_before_current_hs(rto, prev_f, curr_f)
+            next_same_hs = next_event_index(rhs, curr_f)
+
+        hs_frames.append(curr_f)
+        hs_sides.append(curr_side)
+        prev_opposite_hs_frames.append(prev_f)
+        to_frames.append(to_f if to_f is not None else -1)
+        next_same_side_hs_frames.append(next_same_hs if next_same_hs is not None else -1)
 
         # calculate step time: current HS -> next opposite HS
         step_time.append(time_vector[curr_f] - time_vector[prev_f])
-        hs_frames.append(curr_f)
-        hs_sides.append(curr_side)
+
+        if to_f is not None:
+            swing_time.append(time_vector[curr_f] - time_vector[to_f])
+        else:
+            swing_time.append(np.nan)
+
 
         if curr_side == "left":
-            # calculate the frame index of toe-off and the next heel strike after that toe-off of the same side (lhs -> lto -> lhs)
-            to_f = next_event_index(lto, curr_f)
-            next_same_hs = next_event_index(lhs, curr_f)
-            prev_opposite_hs_frames.append(prev_f)  # the previous opposite-side HS frame
-            to_frames.append(to_f if to_f is not None else -1)
-            next_same_side_hs_frames.append(next_same_hs if next_same_hs is not None else -1)
-        else: 
-            # rhs -> rto -> rhs
-            to_f = next_event_index(rto, curr_f)
-            next_same_hs = next_event_index(rhs, curr_f)
-            prev_opposite_hs_frames.append(prev_f)
-            to_frames.append(to_f if to_f is not None else -1)
-            next_same_side_hs_frames.append(next_same_hs if next_same_hs is not None else -1)
+            next_to_f = next_event_index(lto, curr_f)
+        else:
+            next_to_f = next_event_index(rto, curr_f)
 
-        # calculate stance time: current HS -> next TO (same side) - how much time the foot is on the ground
-        if to_f is not None:
-            stance_time.append(time_vector[to_f] - time_vector[curr_f])
+        if next_to_f is not None:
+            stance_time.append(time_vector[next_to_f] - time_vector[curr_f])
         else:
             stance_time.append(np.nan)
 
-        # calculate swing time: current TO -> next same-side HS - how much time the foot is in the air
-        if to_f is not None and next_same_hs is not None:
-            swing_time.append(time_vector[next_same_hs] - time_vector[to_f])
-        else:
-            swing_time.append(np.nan)
+
 
     gait_params = {
         "hs_frames": np.array(hs_frames, dtype=int),
@@ -392,50 +463,66 @@ def calculate_gait_parameters_2(keypoints, time_vector, events, scaling_factor=1
 
     return gait_params
 # ------------------ Temporal Parameters ------------------ #
-
-def add_step_direction(source_df, distance_data, stationary_threshold_px=1.0):
+def add_step_direction(
+    source_df,
+    distance_data,
+    forward_axis_sign,
+    debug=False,
+):
     steps_df = source_df.copy()
 
     dx_values = []
     directions = []
 
     for _, row in steps_df.iterrows():
+        step_index = int(row["global_step_index"])
         side = row["side"]
+        to_frame = int(row["to_frame"])
         hs_frame = int(row["hs_frame"])
+        #prev_frame = int(row["prev_opposite_hs_frame"])
 
-        if side == "left":
-            step_signal = distance_data["left_ankle_distance"][:, 0]
-            stance_signal = distance_data["right_ankle_distance"][:, 0]
-        elif side == "right":
-            step_signal = distance_data["right_ankle_distance"][:, 0]
-            stance_signal = distance_data["left_ankle_distance"][:, 0]
-        else:
-            dx_values.append(np.nan)
-            directions.append("unknown")
-            continue
+        #if side == "left":
+        #    current_x = distance_data["left_ankle"][hs_frame, 0]
+        #    prev_x = distance_data["right_ankle"][prev_frame, 0]
+        #    prev_side = "right"
+        #elif side == "right":
+        #    current_x = distance_data["right_ankle"][hs_frame, 0]
+        #    prev_x = distance_data["left_ankle"][prev_frame, 0]
+        #    prev_side = "left"
+        #else:
+        #    dx_values.append(np.nan)
+        #    directions.append("unknown")
+        #    continue
 
-        if hs_frame < 0 or hs_frame >= len(step_signal) or hs_frame >= len(stance_signal):
-            dx_values.append(np.nan)
-            directions.append("unknown")
-            continue
+        #raw_dx = current_x - prev_x
+        #dx = forward_axis_sign * raw_dx
 
-        dx = step_signal[hs_frame] - stance_signal[hs_frame]
+        to_frame_pelvis_x = distance_data["mid_pelvis_loc"][to_frame, 0]
+        hs_frame_pelvis_x = distance_data["mid_pelvis_loc"][hs_frame, 0]
+
+        dx = abs(hs_frame_pelvis_x) - abs(to_frame_pelvis_x)
+        if forward_axis_sign < 0:
+            dx = -dx
 
         if not np.isfinite(dx):
             dx_values.append(np.nan)
             directions.append("unknown")
             continue
 
-        dx_values.append(float(dx))
-
-        if dx > stationary_threshold_px:
-            directions.append("forward")
-        elif dx < -stationary_threshold_px:
-            directions.append("backward")
+        if dx > 0:
+            direction = "forward"
+        elif dx < 0:
+            direction = "backward"
         else:
-            directions.append("stationary")
+            direction = "stationary"
 
-    steps_df["relative_foot_dx_px"] = dx_values
+        dx_values.append(float(dx))
+        directions.append(direction)
+
+        #print(f"Step {step_index} ({side}): dx = {dx:.2f}, direction = {direction}")
+        
+    steps_df["global_step_dx_px"] = dx_values
+    steps_df["relative_foot_dx_px"] = dx_values  # keep existing schema compatibility
     steps_df["step_direction"] = directions
 
     return steps_df
