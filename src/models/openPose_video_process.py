@@ -148,7 +148,9 @@ def openpose_pose_estimation(input, start_frame, end_frame):
     create_filtered_video(processor, all_frames, keypoints_arr, video_path, video_name, out_range)
 
     # Returning both arrays so the caller can extract gait parameters without smoothing effects
-    return keypoints_arr, spatial_filtered_unfiltered_time_arr
+    frame_indices = [f["frame_index"] for f in all_frames]
+    has_person = [len(f["persons"]) > 0 for f in all_frames]
+    return keypoints_arr, spatial_filtered_unfiltered_time_arr, frame_indices, has_person
 
 def _create_post_processor():
     # Exactly match HRNet settings with fs=60 and conf_threshold=0.3

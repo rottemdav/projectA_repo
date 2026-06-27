@@ -108,31 +108,53 @@ def infer_forward_axis_sign(model, keypoints_dict, confidence_threshold=0.2):
 
     return 1.0 if median_dx > 0 else -1.0
 
-def gait_event_detection(gait_distance_data, frame_indices, heel_strike_extrema="max") -> Dict[str, np.ndarray]:
+def gait_event_detection(
+    gait_distance_data,
+    frame_indices,
+    heel_strike_extrema="max",
+    prominence_mult=0.1,
+    shared_prominence=False,
+    min_distance_frames=None,
+    min_width_frames=None,
+    return_diagnostics=False,
+) -> Dict[str, np.ndarray]:
 
     def _fill_nan_1d(x):
         x = np.asarray(x, dtype=float).copy()
         valid = np.isfinite(x)
-
-        if not np.any(valid):
+        if not np.any(valid) or np.all(valid):
             return x
-
-        if np.all(valid):
-            return x
-
         idx = np.arange(len(x))
         x[~valid] = np.interp(idx[~valid], idx[valid], x[valid])
         return x
 
-    def _detect_hs_to(signal):
-        prominence = 0.1 * (np.nanmax(signal) - np.nanmin(signal))
+    def _robust_range(signal):
+        finite = signal[np.isfinite(signal)]
+        if finite.size == 0:
+            return 0.0
+        lo, hi = np.nanpercentile(finite, [5, 95])
+        signal_range = hi - lo
+        if not np.isfinite(signal_range) or signal_range <= 0:
+            signal_range = np.nanmax(finite) - np.nanmin(finite)
+        return float(max(signal_range, 0.0))
+
+    def _detect_hs_to(signal, hs_prominence):
+        if signal.size < 3 or hs_prominence <= 0:
+            empty = np.array([], dtype=int)
+            return empty, empty
+
+        peak_kwargs = {
+            "prominence": hs_prominence,
+            "distance": min_distance_frames,
+            "width": min_width_frames,
+        }
 
         if heel_strike_extrema == "max":
-            hs_idx, _ = find_peaks(signal, prominence=prominence)
-            to_idx, _ = find_peaks(-signal, prominence=prominence)
+            hs_idx, _ = find_peaks(signal, **peak_kwargs)
+            to_idx, _ = find_peaks(-signal, **peak_kwargs)
         elif heel_strike_extrema == "min":
-            hs_idx, _ = find_peaks(-signal, prominence=prominence)
-            to_idx, _ = find_peaks(signal, prominence=prominence)
+            hs_idx, _ = find_peaks(-signal, **peak_kwargs)
+            to_idx, _ = find_peaks(signal, **peak_kwargs)
         else:
             raise ValueError("heel_strike_extrema must be 'max' or 'min'")
 
@@ -141,12 +163,48 @@ def gait_event_detection(gait_distance_data, frame_indices, heel_strike_extrema=
     left_signal = _fill_nan_1d(gait_distance_data["left_ankle_distance"][:, 0])
     right_signal = _fill_nan_1d(gait_distance_data["right_ankle_distance"][:, 0])
 
-    lhs_idx, lto_idx = _detect_hs_to(left_signal)
-    rhs_idx, rto_idx = _detect_hs_to(right_signal)
+    left_range = _robust_range(left_signal)
+    right_range = _robust_range(right_signal)
 
-    return {
+    if shared_prominence:
+        base_range = max(left_range, right_range)
+        left_prominence = prominence_mult * base_range
+        right_prominence = prominence_mult * base_range
+    else:
+        base_range = None
+        left_prominence = prominence_mult * left_range
+        right_prominence = prominence_mult * right_range
+
+    lhs_idx, lto_idx = _detect_hs_to(left_signal, left_prominence)
+    rhs_idx, rto_idx = _detect_hs_to(right_signal, right_prominence)
+
+    events = {
         "lhs": lhs_idx,
         "lto": lto_idx,
         "rhs": rhs_idx,
         "rto": rto_idx,
     }
+
+    if not return_diagnostics:
+        return events
+
+    diagnostics = {
+        "ranges": {
+            "left": left_range,
+            "right": right_range,
+            "shared": base_range,
+        },
+        "prominence": {
+            "left": left_prominence,
+            "right": right_prominence,
+        },
+        "min_distance_frames": min_distance_frames,
+        "min_width_frames": min_width_frames,
+        "heel_strike_extrema": heel_strike_extrema,
+        "frame_span": (
+            frame_indices[0],
+            frame_indices[-1],
+        ) if len(frame_indices) else None,
+    }
+
+    return events, diagnostics

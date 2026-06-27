@@ -63,14 +63,14 @@ def load_keypoints_dict_from_json(
         n_kpts = 133
         names = WHOLEBODY_KEYPOINTS if len(WHOLEBODY_KEYPOINTS) == 133 else [f"kpt_{i}" for i in range(133)]
 
-    elif model_type == "body25":
+    elif model_type in ("body25", "openpose"):
         # Prefer explicit body25 block if present; fallback to body+feet and keep rest NaN.
         sections = [(["body25"], 25)]
         n_kpts = 25
         names = [f"kpt_{i}" for i in range(25)]
 
     else:
-        raise ValueError(f"Unsupported model_type: {model_type}. Use 'wholebody' or 'body25'.")
+        raise ValueError(f"Unsupported model_type: {model_type}. Use 'wholebody' or 'openpose'.")
 
     n_frames = len(frames)
     keypoints = np.full((n_frames, n_kpts, 3), np.nan, dtype=np.float32)
@@ -177,7 +177,7 @@ def save_keypoints_dict_to_json(
         sections = [(["body25"], 25)]
         expected_kpts = 25
     else:
-        raise ValueError(f"Unsupportedd model_type: {model_type}. Use 'wholebody' or 'body25'.")
+        raise ValueError(f"Unsupported model_type: {model_type}. Use 'wholebody' or 'openpose'.")
 
     if n_kpts != expected_kpts:
         raise ValueError(

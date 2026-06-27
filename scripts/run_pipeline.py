@@ -147,7 +147,20 @@ def main():
             # Mirror HRNet skip behavior by re-running temporal post-processing.
             _, op_keypoints_arr = keypoint_post_process(op_keypoints_arr, Config.VIDEO_NAME, Config.FRAME_RANGE)
         else:
-            kp_filtered, kp_unfiltered = openpose_pose_estimation(Config.INPUT_PATH, Config.START_FRAME, Config.END_FRAME)
+            kp_filtered, kp_unfiltered, frame_indices, has_person = openpose_pose_estimation(
+                Config.INPUT_PATH,
+                Config.START_FRAME,
+                Config.END_FRAME,
+            )
+            save_keypoints_dict_to_json(
+                {
+                    "frame_indices": frame_indices,
+                    "keypoints": op_keypoints_arr,
+                    "has_person": has_person,
+                },
+                output_path,
+                model_type="openpose"
+            )
             op_keypoints_arr = kp_filtered
             start = Config.START_FRAME or 0
             frame_indices = list(range(start, start + len(op_keypoints_arr)))

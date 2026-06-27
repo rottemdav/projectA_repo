@@ -100,7 +100,7 @@ if args.model == "hrnet":
     angle_model = "wholeBody"
     sagittal_angle_model = "wholebody"
     spatial_model = "COCO-WholeBody"
-    
+
 elif args.model == "openpose":
     keypoints_model_type = "body25"
     gait_model = "body25"
@@ -153,13 +153,25 @@ aligned_distance_data = align_x_to_motion_axis(
     forward_axis_sign=forward_axis_sign,
 )
 
+event_detection_kwargs = {
+    "heel_strike_extrema": args.heel_strike_extrema,
+}
+
+if args.model == "openpose":
+    event_detection_kwargs.update({
+        "prominence_mult": 0.015,
+        "shared_prominence": True,
+        "min_distance_frames": 40,
+        "min_width_frames": 10,
+    })
+
 gait_events = gait_event_detection(
     aligned_distance_data,
     frame_indices=keypoints_dict["frame_indices"],
-    heel_strike_extrema=args.heel_strike_extrema,
+    **event_detection_kwargs,
 )
 
-angles = calculate_angles(angle_model, keypoints_dict["keypoints"])
+#angles = calculate_angles(angle_model, keypoints_dict["keypoints"])
 
 #print("Available angles:", angles.keys())
 #print("Left knee angles shape:", angles["LKnee"].shape)
